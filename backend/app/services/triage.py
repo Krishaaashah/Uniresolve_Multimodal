@@ -15,15 +15,21 @@ from typing import Optional
 from app.models.complaint import (
     TriageResult, Category, Severity, Sentiment
 )
+from app.config import (
+    GEMINI_API_KEY, ANTHROPIC_API_KEY, GEMINI_MODEL, CLAUDE_MODEL
+)
 
 logger = logging.getLogger(__name__)
 
 # ── Keyword maps for rule-based fallback ───────────────────────────────────────
 CATEGORY_KEYWORDS = {
-    Category.MOBILE_BANKING: ["upi", "payment", "transfer", "gpay", "phonepe", "neft", "rtgs", "imps", "transaction", "mobile", "app"],
-    Category.ACCOUNT: ["net banking", "netbanking", "login", "password", "otp", "internet banking", "online banking", "kyc", "account", "aadhaar", "pan", "verification", "documents"],
+    Category.MOBILE_BANKING: ["mobile banking", "app transfer", "mobile app", "beneficiary add", "fingerprint login"],
+    Category.UPI: ["upi", "gpay", "phonepe", "paytm", "bhim", "upi pin", "transaction fail"],
+    Category.ACCOUNT: ["account", "nominee", "joint account", "balance update"],
+    Category.NETBANKING: ["net banking", "netbanking", "login", "password", "otp", "internet banking", "online banking"],
+    Category.ATM: ["atm", "cash withdrawal", "atm card", "swallowed", "dispense"],
+    Category.CREDIT_CARD: ["card", "debit card", "credit card", "swipe", "blocked card"],
     Category.LOAN: ["loan", "emi", "interest", "repayment", "mortgage"],
-    Category.CREDIT_CARD: ["atm", "card", "debit card", "credit card", "swipe", "cash withdrawal", "blocked card"],
     Category.INSURANCE: ["insurance", "claim", "premium", "policy"],
     Category.INVESTMENT: ["investment", "mutual fund", "portfolio", "demat", "shares"],
     Category.FRAUD: ["fraud", "scam", "unauthorized", "stolen", "phishing", "hack", "cheat"],
@@ -50,11 +56,15 @@ RESPONSE_TEMPLATES = {
     Category.INSURANCE: "Dear Customer, we have registered your insurance complaint and will route it to the concerned team for review.",
     Category.INVESTMENT: "Dear Customer, we have received your investment-related concern and will have the specialist team review it.",
     Category.FRAUD:      "URGENT: Dear Customer, we take fraud reports extremely seriously. Your account has been flagged for immediate review. Please call our fraud helpline 1800-XXX-XXXX (24x7) immediately. Do NOT share any OTP or credentials.",
-    Category.GENERAL:    "Dear Customer, thank you for reaching out to Union Bank. Your complaint has been registered and will be addressed by our support team within 48 hours.",
+    Category.GENERAL:    "Dear Customer, thank you for reaching out to UniResolve. Your complaint has been registered and will be addressed by our support team within 48 hours.",
+    Category.UPI:        "Dear Customer, we have registered your complaint regarding the UPI transaction failure. As per RBI guidelines, we are processing the status check and reversal. Reference ID: {ref_id}.",
+    Category.NETBANKING: "Dear Customer, we are looking into the net banking login/service issue. Our support team will review and resolve it at the earliest.",
+    Category.ATM:        "Dear Customer, we acknowledge your ATM-related grievance. If cash was not dispensed but debited, a reversal will be processed as per RBI timelines. Reference ID: {ref_id}.",
+    Category.KYC:        "Dear Customer, your KYC update request is being reviewed by our compliance team. Reference ID: {ref_id}."
 }
 
 
-def _rule_based_triage(text: str) -> TriageResult:
+def _rule_based_triage(text: str, skip_ai_draft: bool = False) -> TriageResult:
     """Deterministic fallback when the ML model is not loaded."""
     lower = text.lower()
 
@@ -84,10 +94,13 @@ def _rule_based_triage(text: str) -> TriageResult:
     key_issue = sentences[0].strip()[:120] if sentences else text[:120]
 
     import uuid
-    fallback_response = RESPONSE_TEMPLATES[category].format(
+    fallback_response = RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES[Category.GENERAL]).format(
         ref_id=str(uuid.uuid4())[:8].upper()
     )
-    suggested_response = generate_draft_response(text, category, sentiment, severity, fallback_response)
+    if skip_ai_draft:
+        suggested_response = fallback_response
+    else:
+        suggested_response = generate_draft_response(text, category, sentiment, severity, fallback_response)
 
     return TriageResult(
         category=category,
@@ -101,37 +114,69 @@ def _rule_based_triage(text: str) -> TriageResult:
 
 
 def generate_draft_response(complaint_text: str, category, sentiment, severity, fallback: str = "") -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return fallback or RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES[Category.GENERAL]).format(ref_id="DEMO")
-    try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=180,
-            system=(
-                "You are a professional customer service agent for a financial institution. "
-                "Write empathetic, concise complaint responses. Do not make up policy details. Maximum 3 sentences."
-            ),
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
+    if GEMINI_API_KEY:
+        try:
+            import httpx
+            # Call Gemini API
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{
+                    "parts": [{"text": (
                         f"Complaint: {complaint_text}\n"
                         f"Category: {getattr(category, 'value', category)}\n"
                         f"Sentiment: {getattr(sentiment, 'value', sentiment)}\n"
-                        f"Severity: {getattr(severity, 'value', severity)}"
-                    ),
+                        f"Severity: {getattr(severity, 'value', severity)}\n\n"
+                        f"Write a professional customer service response for a financial institution. "
+                        f"Write empathetically and concisely. Do not make up policy details. Max 3 sentences."
+                    )}]
+                }],
+                "generationConfig": {
+                    "maxOutputTokens": 180
                 }
-            ],
-        )
-        text = "".join(block.text for block in message.content if getattr(block, "type", "") == "text").strip()
-        return text or fallback
-    except Exception as e:
-        logger.warning(f"Claude draft generation failed: {e}. Using FLAN/rule fallback.")
-        return fallback
+            }
+            res = httpx.post(url, json=payload, headers=headers, timeout=10.0)
+            if res.status_code == 200:
+                data = res.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                if text:
+                    return text
+            else:
+                logger.warning(f"Gemini API returned status {res.status_code}: {res.text}")
+        except Exception as e:
+            logger.warning(f"Gemini draft generation failed: {e}. Falling back.")
+
+    if ANTHROPIC_API_KEY:
+        try:
+            import anthropic
+
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            message = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=180,
+                system=(
+                    "You are a professional customer service agent for a financial institution. "
+                    "Write empathetic, concise complaint responses. Do not make up policy details. Maximum 3 sentences."
+                ),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Complaint: {complaint_text}\n"
+                            f"Category: {getattr(category, 'value', category)}\n"
+                            f"Sentiment: {getattr(sentiment, 'value', sentiment)}\n"
+                            f"Severity: {getattr(severity, 'value', severity)}"
+                        ),
+                    }
+                ],
+            )
+            text = "".join(block.text for block in message.content if getattr(block, "type", "") == "text").strip()
+            return text or fallback
+        except Exception as e:
+            logger.warning(f"Claude draft generation failed: {e}. Using fallback.")
+            return fallback
+
+    return fallback or RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES[Category.GENERAL]).format(ref_id="DEMO")
 
 
 class TriageService:
@@ -179,9 +224,9 @@ class TriageService:
         outputs = self.model.generate(**inputs, max_new_tokens=50)
         return self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
-    def triage(self, masked_text: str) -> TriageResult:
+    def triage(self, masked_text: str, skip_ai_draft: bool = False) -> TriageResult:
         if not self._model_ready or self.model is None:
-            return _rule_based_triage(masked_text)
+            return _rule_based_triage(masked_text, skip_ai_draft=skip_ai_draft)
 
         try:
             # Category
@@ -220,7 +265,10 @@ class TriageService:
             fallback_response = RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES[Category.GENERAL]).format(
                 ref_id=str(uuid.uuid4())[:8].upper()
             )
-            suggested_response = generate_draft_response(masked_text, category, sentiment, severity, fallback_response)
+            if skip_ai_draft:
+                suggested_response = fallback_response
+            else:
+                suggested_response = generate_draft_response(masked_text, category, sentiment, severity, fallback_response)
 
             return TriageResult(
                 category=category,
@@ -234,7 +282,7 @@ class TriageService:
 
         except Exception as e:
             logger.error(f"Model inference failed: {e}. Falling back to rules.")
-            return _rule_based_triage(masked_text)
+            return _rule_based_triage(masked_text, skip_ai_draft=skip_ai_draft)
 
 
 # Singleton

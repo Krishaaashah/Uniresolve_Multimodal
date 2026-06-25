@@ -5,11 +5,12 @@ Main FastAPI application
 
 import asyncio
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from app.services.cbs import get_customer_profile
 
 from app.api.complaints import router as complaints_router
 from app.api.complaints import limiter
@@ -51,7 +52,9 @@ async def _sla_monitor():
 
 @app.on_event("startup")
 async def startup_tasks():
+    from app.connectors.orchestrator import run_orchestrator
     asyncio.create_task(_sla_monitor())
+    asyncio.create_task(run_orchestrator())
 
 
 @app.get("/", tags=["health"])
@@ -77,3 +80,12 @@ async def reseed_demo():
         return {"seeded": True, "message": "Demo data reset successfully."}
     except Exception as e:
         return {"seeded": False, "error": str(e)}
+
+
+@app.get("/customers/{customer_id}", tags=["cbs"])
+async def get_customer(customer_id: str):
+    profile = get_customer_profile(customer_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Customer profile not found in CBS")
+    return profile
+

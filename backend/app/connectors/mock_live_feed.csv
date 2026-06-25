@@ -1,0 +1,7 @@
+channel,complaint_text,customer_id,branch_code,agent_name,duration,media_file,media_type
+branch,"I visited the Andheri West branch to update my signature on my savings account with my mother, but the staff claims it does not match. Need it fixed.",CUST-10245,ANDHERI_WEST_022,Rakesh Mishra,,,
+ivr,"",CUST-30482,,,78,mock_evidence/voice_note.wav,audio/wav
+app,"",CUST-10245,,,,mock_evidence/app_error.png,image/png
+branch,"I submitted my physical KYC documents at the Bangalore branch over two weeks ago, but my account remains frozen. Shalini Sen is unresponsive.",CUST-20591,BLR_MAIN_080,Shalini Sen,,,
+ivr,"Duplicate transaction of Rs 18,450 detected on my credit card on June 21st.",CUST-20591,,,45,,,
+app,"I tried to reset my UPI PIN through the mobile app but I am not receiving the OTP. Please fix.",CUST-30482,,,

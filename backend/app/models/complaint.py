@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 
 class Channel(str, Enum):
@@ -76,19 +76,26 @@ class MessageAuthor(str, Enum):
 
 class RawComplaintIn(BaseModel):
     channel: Channel
-    raw_text: str = Field(..., max_length=5000, validation_alias=AliasChoices("raw_text", "complaint_text"))
+    raw_text: Optional[str] = Field(default="", max_length=5000, validation_alias=AliasChoices("raw_text", "complaint_text"))
     channel_metadata: dict[str, Any] = Field(default_factory=dict)
     customer_id: Optional[str] = None
     source_ref: Optional[str] = None
     received_at: Optional[datetime] = None
+    media_file: Optional[str] = None
+    media_type: Optional[str] = None
 
     @field_validator("raw_text")
     @classmethod
-    def strip_and_validate_text(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("complaint_text cannot be empty")
-        return value
+    def strip_and_validate_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return ""
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_content_present(self) -> RawComplaintIn:
+        if not self.raw_text and not self.media_file:
+            raise ValueError("Either raw_text (complaint_text) or media_file must be provided.")
+        return self
 
 
 class TriageResult(BaseModel):

@@ -296,6 +296,60 @@ main{flex:1;overflow-y:auto;padding:22px}
   border-top-color:var(--blue);border-radius:50%;
   animation:spin .8s linear infinite;margin:0 auto 12px}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* MULTIMODAL MEDIA CARDS */
+.media-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.02);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+  overflow: hidden;
+}
+.media-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(0,48,135,0.06);
+  border-color: var(--blue2);
+}
+.media-card img {
+  max-width: 100%;
+  max-height: 260px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  display: block;
+  cursor: zoom-in;
+  object-fit: contain;
+  background: #f8fafc;
+  margin: 0 auto;
+  transition: transform 0.3s ease;
+}
+.media-card img:hover {
+  transform: scale(1.02);
+}
+.media-card audio {
+  width: 100%;
+  outline: none;
+  border-radius: 30px;
+  margin-top: 8px;
+}
+.media-card video {
+  width: 100%;
+  max-height: 280px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #000;
+  display: block;
+  margin: 0 auto;
+  margin-top: 8px;
+}
+.media-card-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
 </style>
 </head>
 <body>
@@ -428,6 +482,10 @@ main{flex:1;overflow-y:auto;padding:22px}
         <label>Complaint Text</label>
         <textarea id="igText" placeholder="e.g. My UPI payment of Rs 2000 failed but money was deducted..."></textarea>
       </div>
+      <div class="fg">
+        <label>Attach Evidence (Screenshot, Voice recording, Video)</label>
+        <input type="file" id="igFile" accept="image/*,audio/*,video/*" style="width:100%;padding:8px;border:1.5px dashed var(--border);border-radius:8px;font-size:13px;outline:none;background:#f7fafc;cursor:pointer">
+      </div>
       <button class="sub-btn" id="igBtn" onclick="submitComplaint()"><span class="with-icon"><svg class="icon sm"><use href="#i-bot"></use></svg> Analyse & Submit</span></button>
     </div>
   </div>
@@ -437,8 +495,11 @@ main{flex:1;overflow-y:auto;padding:22px}
 
 <script>
 // ────────────────────────────────────────────────────────────────────────────
-const API = 'http://localhost:8000';
-const API_KEY = 'dev-secret-key';
+const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+  ? 'http://localhost:8000' 
+  : window.location.origin;
+const localKey = localStorage.getItem('UNIRESOLVE_API_KEY');
+const API_KEY = (!localKey || localKey === 'undefined' || localKey === 'null' || localKey.trim() === '') ? 'dev-secret-key' : localKey;
 const DEMO_POOL = [
   {channel:'app', text:'My UPI payment of Rs 3000 failed but amount was debited from my account.'},
   {channel:'email', text:'Home loan EMI deducted twice this month from my account. Need immediate refund.'},
@@ -488,10 +549,12 @@ setInterval(async()=>{ await loadAll(); render(); },60000);
 // ── API ──────────────────────────────────────────────────────────────────────
 async function apiFetch(path, opts){
   opts = opts || {};
-  const method = (opts.method || 'GET').toUpperCase();
   const headers = Object.assign({}, opts.headers || {});
-  if(method !== 'GET') headers['X-Api-Key'] = API_KEY;
+  headers['X-Api-Key'] = API_KEY;
   const r = await fetch(API+path, Object.assign({}, opts, {headers}));
+  if (r.status === 401) {
+    localStorage.removeItem('UNIRESOLVE_API_KEY');
+  }
   if(!r.ok) throw new Error(r.status);
   return r.json();
 }
@@ -686,12 +749,23 @@ function slaBar(c){
   if(!c.sla) return '';
   const pct = Math.min(100, c.sla.percent_used);
   const st = c.sla.status;
-  const label = st==='breached'?`SLA BREACHED`:
-                st==='at_risk'?`At risk`:
-                `${c.sla.hours_remaining.toFixed(1)}h left`;
+  let label = '';
+  if (c.sla.hours_remaining <= 0 || st === 'breached') {
+    const hrsOver = Math.abs(c.sla.hours_remaining);
+    const hrs = Math.floor(hrsOver);
+    const mins = Math.round((hrsOver - hrs) * 60);
+    label = `🚨 BREACHED BY ${hrs}h ${mins}m`;
+  } else {
+    const hrs = Math.floor(c.sla.hours_remaining);
+    const mins = Math.round((c.sla.hours_remaining - hrs) * 60);
+    label = st === 'at_risk' 
+      ? `⚠️ AT RISK: ${hrs}h ${mins}m left`
+      : `⏱️ ${hrs}h ${mins}m left`;
+  }
+  const pulseClass = st === 'breached' || st === 'at_risk' ? 'pulse' : '';
   return `<div class="sla-wrap">
     <div class="sla-track"><div class="sla-fill ${st}" style="width:${pct}%"></div></div>
-    <span class="sla-badge ${st}">${label}</span>
+    <span class="sla-badge ${st} ${pulseClass}">${label}</span>
   </div>`;
 }
 
@@ -898,31 +972,81 @@ function renderSLA(){
 }
 
 // ── SYSTEMIC ALERTS ──────────────────────────────────────────────────────────
-function renderAlerts(){
+async function renderAlerts(){
   const alerts = ALL.filter(c=>c.cluster?.systemic_alert);
   document.getElementById('viewRoot').innerHTML = `
     <div class="sec-hdr"><h2 class="with-icon">${icon('alert')} Systemic Alerts</h2></div>
-    ${alerts.length===0?'<div class="loading">No systemic alerts active.</div>':''}
-    ${alerts.map(c=>`
-      <div style="background:#fff5f5;border:2px solid var(--red);border-radius:12px;padding:20px;margin-bottom:16px">
-        <div style="font-weight:800;color:var(--red);font-size:16px;margin-bottom:6px">
-          ${icon('alert')} SYSTEMIC OUTAGE - ${c.triage?.category}
-        </div>
-        <div style="font-size:14px;margin-bottom:6px">
-          <strong>${c.cluster?.cluster_size} similar complaints</strong> detected in this cluster.
-          Root cause analysis suggests a <strong>system-wide issue</strong>.
-        </div>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:12px">${(c.masked_text||'').substring(0,200)}</div>
-        <div style="display:flex;gap:10px;align-items:center">
-          <button onclick="openDetail('${c.id}')"
-            style="background:var(--red);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:700">
-            View Detail →
-          </button>
-          <span style="font-size:12px;color:var(--muted)">Received ${timeAgo(c.received_at)}</span>
+    
+    <div id="rootCauseDiagnosticsContainer" style="background:#f7fafc;border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:22px">
+      <div style="font-weight:800;color:var(--blue);font-size:15px;margin-bottom:12px;display:flex;align-items:center;gap:8px">
+        <span class="live-dot" style="background:var(--red);width:8px;height:8px;border-radius:50%;display:inline-block;animation:pulse 1.2s infinite"></span>
+        Gen-AI Outage Diagnostics (Union Bank Gateway)
+      </div>
+      <div id="rootCauseDiagnosticContent">
+        <div style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;padding:4px 0">
+          <div class="spinner" style="width:16px;height:16px;margin:0"></div>
+          Analyzing clusters with Gemini root-cause engine...
         </div>
       </div>
-    `).join('')}
+    </div>
+
+    <h3 style="font-size:14px;margin-bottom:12px;color:var(--text)">Outage Incident Reports</h3>
+    <div class="clist">
+      ${alerts.length===0?'<div class="loading">No systemic alerts active.</div>':''}
+      ${alerts.map(c=>`
+        <div style="background:#fff5f5;border:2px solid var(--red);border-radius:12px;padding:20px;margin-bottom:16px">
+          <div style="font-weight:800;color:var(--red);font-size:16px;margin-bottom:6px">
+            ${icon('alert')} SYSTEMIC OUTAGE - ${c.triage?.category}
+          </div>
+          <div style="font-size:14px;margin-bottom:6px">
+            <strong>${c.cluster?.cluster_size} similar complaints</strong> detected in this cluster.
+            Root cause analysis suggests a <strong>system-wide issue</strong>.
+          </div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:12px">${(c.masked_text||'').substring(0,200)}</div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button onclick="openDetail('${c.id}')"
+              style="background:var(--red);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:700">
+              View Detail →
+            </button>
+            <span style="font-size:12px;color:var(--muted)">Received ${timeAgo(c.received_at)}</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>
   `;
+
+  try {
+    const res = await apiFetch('/complaints/root-cause');
+    const contentEl = document.getElementById('rootCauseDiagnosticContent');
+    if (!contentEl) return;
+
+    if (res.message === 'insufficient data' || !res.root_causes || res.root_causes.length === 0) {
+      contentEl.innerHTML = `<div style="font-size:13px;color:var(--muted)">No systemic clusters large enough for diagnostic profiling yet. Feed more mock data using the 'Live Demo' widget.</div>`;
+      return;
+    }
+
+    contentEl.innerHTML = `
+      <div style="font-size:13px;color:var(--text);line-height:1.6">
+        <p style="margin-bottom:10px;color:var(--muted)">Gemini has analyzed the ticket descriptions and isolated the following core root-cause incidents:</p>
+        <div style="display:grid;grid-template-columns:1fr;gap:12px">
+          ${res.root_causes.map((rc, idx) => `
+            <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px;border-left:4px solid var(--red)">
+              <div style="font-weight:800;color:var(--blue);font-size:13.5px;display:flex;justify-content:space-between">
+                <span>Incident #${idx + 1}: ${cleanText(rc.cause)}</span>
+                <span class="pill" style="background:#fed7d7;color:#c53030;font-size:10px">${rc.count_estimate} reports matched</span>
+              </div>
+              <div style="font-size:12px;color:var(--muted);margin-top:6px;font-style:italic">"${cleanText(rc.example_complaint)}"</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  } catch(e) {
+    const contentEl = document.getElementById('rootCauseDiagnosticContent');
+    if (contentEl) {
+      contentEl.innerHTML = `<div style="font-size:13px;color:var(--muted)">Outage diagnostic disabled. Set GEMINI_API_KEY in .env to enable dynamic root-cause clustering.</div>`;
+    }
+  }
 }
 
 // ── TREND ANALYTICS ──────────────────────────────────────────────────────────
@@ -1140,6 +1264,7 @@ function openDetail(id){
   detailComplaint = c;
   switchTab('overview');
   renderOverview(c);
+  loadCustomerProfile(c);
   renderHistoryTab(c);
   renderSlaTab(c);
   renderEscalationTab(c);
@@ -1176,6 +1301,8 @@ function renderOverview(c){
       <div class="iblk"><label>Cluster</label><p>${c.cluster?.cluster_size>1?`<span class="with-icon">${icon('link','sm')} ${c.cluster.cluster_size} related</span>`:'Unique'}</p></div>
       <div class="iblk"><label>Customer ID</label><p>${c.customer_id||'Anonymous'}</p></div>
     </div>
+    <div id="cbsProfileContainer"></div>
+    ${renderAttachmentsHtml(c)}
     ${c.cluster?.systemic_alert?`
       <div style="background:#fff5f5;border:1px solid var(--red);border-radius:8px;padding:12px;
         margin-bottom:14px;font-size:13px;color:var(--red);font-weight:700">
@@ -1208,6 +1335,73 @@ function renderOverview(c){
         <span style="font-size:11px;color:var(--muted)">AI Confidence</span>
         <div class="conf-track"><div class="conf-fill" style="width:${Math.round((t.confidence||0)*100)}%"></div></div>
         <span style="font-size:11px;font-weight:700;color:var(--green)">${Math.round((t.confidence||0)*100)}%</span>
+      </div>
+      
+      <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.3px">RBI Audit Trail (Explainable AI)</span>
+          <button class="esc-btn" style="padding:4px 8px;font-size:11px;font-weight:700;border-color:var(--blue);color:var(--blue)" onclick="fetchTriageExplanation('${c.id}')">
+            <span class="with-icon">${icon('key','sm')} Audit Reason</span>
+          </button>
+        </div>
+        <div id="aiExplanationText" style="font-size:12.5px;color:var(--text);font-style:italic;line-height:1.5;background:#fff;border:1px dashed var(--border);border-radius:6px;padding:8px 10px">
+          Click 'Audit Reason' to fetch dynamic explainability statement from Gemini compliance auditor.
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderAttachmentsHtml(c) {
+  if (!c.channel_metadata || !c.channel_metadata.attachments || c.channel_metadata.attachments.length === 0) {
+    return '';
+  }
+  return `
+    <div style="margin-top:16px;margin-bottom:16px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:8px;font-weight:700;letter-spacing:0.3px">
+        Multimodal Evidence / Attachments (${c.channel_metadata.attachments.length})
+      </div>
+      <div style="display:grid;grid-template-columns:1fr;gap:12px">
+        ${c.channel_metadata.attachments.map(att => {
+          const url = att.url.startsWith('http') || att.url.startsWith('data:') ? att.url : '/' + att.url;
+          if (att.type.startsWith('image/')) {
+            return `
+              <div class="media-card">
+                <div class="media-card-title" style="color:var(--blue)">
+                  ${icon('globe', 'sm')} Visual Evidence (Screenshot / Image)
+                </div>
+                <a href="${url}" target="_blank" style="display:inline-block;width:100%;margin-top:8px">
+                  <img src="${url}" alt="Evidence Screenshot">
+                </a>
+              </div>
+            `;
+          } else if (att.type.startsWith('audio/')) {
+            return `
+              <div class="media-card">
+                <div class="media-card-title" style="color:var(--orange)">
+                  ${icon('phone', 'sm')} Voice Recording (Audio Complaint)
+                </div>
+                <audio controls src="${url}"></audio>
+              </div>
+            `;
+          } else if (att.type.startsWith('video/')) {
+            return `
+              <div class="media-card">
+                <div class="media-card-title" style="color:var(--purple)">
+                  ${icon('trend', 'sm')} Screen Recording (Video Evidence)
+                </div>
+                <video controls src="${url}"></video>
+              </div>
+            `;
+          } else {
+            return `
+              <div class="media-card" style="display:flex;align-items:center;justify-content:space-between">
+                <span class="media-card-title">${icon('report', 'sm')} File Attachment</span>
+                <a href="${url}" target="_blank" style="color:var(--blue);font-weight:700;font-size:12px;text-decoration:underline">Open File</a>
+              </div>
+            `;
+          }
+        }).join('')}
       </div>
     </div>
   `;
@@ -1267,13 +1461,27 @@ function renderSlaTab(c){
   const sla = c.sla;
   const col = slaColor(sla.status);
   const pct = Math.min(100, sla.percent_used);
+  
+  let countdownText = '';
+  if (sla.hours_remaining <= 0 || sla.status === 'breached') {
+    const hrsOver = Math.abs(sla.hours_remaining);
+    const hrs = Math.floor(hrsOver);
+    const mins = Math.round((hrsOver - hrs) * 60);
+    countdownText = `Breached by ${hrs} hours ${mins} minutes`;
+  } else {
+    const hrs = Math.floor(sla.hours_remaining);
+    const mins = Math.round((sla.hours_remaining - hrs) * 60);
+    countdownText = `${hrs} hours ${mins} minutes remaining`;
+  }
+
   document.getElementById('tp-sla_tab').innerHTML = `
     <div class="sla-detail-box">
       <div style="font-size:12px;color:var(--muted);text-transform:uppercase">SLA Status</div>
-      <div class="sla-big" style="color:${col}">${
-        sla.status==='breached'?'BREACHED':
-        sla.status==='at_risk'?'AT RISK':'ON TRACK'
-      }</div>
+      <div class="sla-big ${sla.status === 'breached' || sla.status === 'at_risk' ? 'pulse' : ''}" style="color:${col};font-weight:900;letter-spacing:-0.5px">
+        ${sla.status==='breached'?'🚨 BREACHED':
+          sla.status==='at_risk'?'⚠️ AT RISK':'⏱️ ON TRACK'}
+      </div>
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-top:6px">${countdownText}</div>
       <div class="sla-track-lg">
         <div class="sla-fill-lg" style="width:${pct}%;background:${col}"></div>
       </div>
@@ -1467,28 +1675,61 @@ function closeIngest(e){
 async function submitComplaint(){
   const text = document.getElementById('igText').value.trim();
   const channel = document.getElementById('igChan').value;
-  if(!text){ showToast('Please enter complaint text','error'); return; }
+  const fileInput = document.getElementById('igFile');
+  const file = fileInput ? fileInput.files[0] : null;
+
+  if(!text && !file){ showToast('Please enter complaint text or attach a file','error'); return; }
   const btn = document.getElementById('igBtn');
   btn.disabled=true; btn.textContent='Analysing...';
+
+  let mediaFile = null;
+  let mediaType = null;
+
+  if(file){
+    btn.innerHTML = `<span class="with-icon">${icon('bot','sm')} Reading file...</span>`;
+    try {
+      const fileReader = new FileReader();
+      const readPromise = new Promise((resolve, reject) => {
+        fileReader.onload = () => resolve(fileReader.result);
+        fileReader.onerror = (e) => reject(e);
+      });
+      fileReader.readAsDataURL(file);
+      mediaFile = await readPromise;
+      mediaType = file.type;
+    } catch(err) {
+      showToast('Error reading media file', 'error');
+      btn.disabled=false;
+      btn.innerHTML=`<span class="with-icon">${icon('bot','sm')} Analyse & Submit</span>`;
+      return;
+    }
+  }
+
+  btn.innerHTML = `<span class="with-icon">${icon('bot','sm')} Analysing with Gemini...</span>`;
+
   try{
     await apiFetch('/complaints/ingest',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({channel,raw_text:text})
+      body:JSON.stringify({channel,raw_text:text,media_file:mediaFile,media_type:mediaType})
     });
     showToast('Complaint ingested and triaged.','success');
   }catch{
     const sev = text.toLowerCase().includes('fraud')||text.toLowerCase().includes('urgent')?'critical':'medium';
+    const attachments = [];
+    if(mediaFile && mediaType) {
+      attachments.push({type: mediaType, url: mediaFile});
+    }
     ALL.unshift({
-      id:'c_'+Date.now(), channel, raw_text:text, masked_text:text,
+      id:'c_'+Date.now(), channel, raw_text:text, masked_text:text || '[Attached Media File]',
+      channel_metadata: {attachments: attachments},
       received_at:new Date().toISOString(), status:'pending',
       escalation_level:'L1 Agent', escalation_history:[], communication_history:[
-        {id:'m1',author:'customer',author_name:'Customer',content:text,is_ai_draft:false,timestamp:new Date().toISOString()},
+        {id:'m1',author:'customer',author_name:'Customer',content:text || '[Attached Media File]',is_ai_draft:false,timestamp:new Date().toISOString()},
         {id:'m2',author:'system',author_name:'System',content:'Complaint received and auto-triaged.',is_ai_draft:false,timestamp:new Date().toISOString()},
       ],
       triage:{
         category:text.toLowerCase().includes('upi')?'UPI / Payments':'General',
         severity:sev, sentiment:'frustrated',
-        key_issue:text.substring(0,80),
+        key_issue:text.substring(0,80) || 'Media complaint',
         suggested_response:'Dear Customer, we have received your complaint and are reviewing it on priority.',
         confidence:.78
       },
@@ -1500,8 +1741,143 @@ async function submitComplaint(){
   }finally{
     btn.disabled=false; btn.innerHTML=`<span class="with-icon">${icon('bot','sm')} Analyse & Submit</span>`;
     document.getElementById('igText').value='';
+    if(fileInput) fileInput.value = '';
     document.getElementById('ingestOv').style.display='none';
     await loadAll(); render();
+  }
+}
+
+async function fetchTriageExplanation(id) {
+  const container = document.getElementById('aiExplanationText');
+  if (!container) return;
+  container.innerHTML = `<div style="display:flex;align-items:center;gap:6px;color:var(--muted);padding:4px 0"><div class="spinner" style="width:14px;height:14px;margin:0"></div>Auditing classification via Gemini...</div>`;
+  try {
+    const res = await apiFetch(`/complaints/${id}/explain`);
+    container.innerHTML = `<strong>Audited Explanation:</strong> ${cleanText(res.explanation)}`;
+  } catch(e) {
+    container.innerHTML = `<span style="color:var(--red)">Failed to fetch audit explanation. Triage classified based on banking rule-match patterns.</span>`;
+  }
+}
+
+// ── CUSTOMER 360 ─────────────────────────────────────────────────────────────
+async function loadCustomerProfile(c) {
+  const container = document.getElementById('cbsProfileContainer');
+  if (!container) return;
+  if (!c.customer_id) {
+    container.innerHTML = `
+      <div style="background:#f7fafc;border:1px dashed var(--border);border-radius:10px;padding:16px;margin-bottom:14px">
+        <div style="font-weight:700;font-size:13px;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+          ${icon('user','sm')} Customer 360° Profile (Unlinked)
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:10px">No customer profile linked to this complaint. Link manually from Core Banking System (CBS):</p>
+        <div style="display:flex;gap:8px">
+          <input id="cbsSearchInput" placeholder="Enter Customer ID (e.g. CUST-10245)" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;outline:none;border-color:var(--border)">
+          <button onclick="linkCustomer('${c.id}')" style="background:var(--blue);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12.5px;font-weight:700;cursor:pointer">Link CBS</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+  container.innerHTML = `<div class="loading" style="padding:15px"><div class="spinner" style="width:20px;height:20px"></div>Querying CBS...</div>`;
+  try {
+    const cust = await apiFetch('/customers/' + c.customer_id);
+    container.innerHTML = `
+      <div style="background:#f7fafc;border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+          <div>
+            <div style="font-weight:800;font-size:14px;color:var(--blue);display:flex;align-items:center;gap:6px">
+              ${icon('user','sm')} ${cust.name}
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">ID: ${cust.id} | Acct: ${cust.account_no} (${cust.account_type})</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <span class="pill" style="background:#c6f6d5;color:#276749">${cust.kyc_status} KYC</span>
+            <span class="pill" style="background:#feebc8;color:#c05621">${cust.risk_tier}</span>
+            <button onclick="unlinkCustomer('${c.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;text-decoration:underline">Unlink</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;font-size:12px">
+          <div><span style="color:var(--muted)">Phone:</span> <strong>${cust.phone}</strong></div>
+          <div><span style="color:var(--muted)">Balance:</span> <strong style="color:var(--green)">${cust.balance}</strong></div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:6px;font-weight:700">Recent Transactions (CBS Log)</div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:11.5px;text-align:left">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border)">
+                <th style="padding:4px 0;color:var(--muted)">Date</th>
+                <th style="padding:4px 0;color:var(--muted)">Description</th>
+                <th style="padding:4px 0;color:var(--muted)">Ref</th>
+                <th style="padding:4px 0;color:var(--muted)">Amount</th>
+                <th style="padding:4px 0;color:var(--muted)">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${cust.transactions.map(t=>`
+                <tr style="border-bottom:1px solid rgba(0,0,0,.04)">
+                  <td style="padding:6px 0">${t.date}</td>
+                  <td style="padding:6px 0;font-weight:600">${t.desc}</td>
+                  <td style="padding:6px 0;color:var(--muted)">${t.ref}</td>
+                  <td style="padding:6px 0;color:${t.amount.startsWith('-')?'#c53030':'#276749'}">${t.amount}</td>
+                  <td style="padding:6px 0"><span class="pill" style="${t.status==='Success'?'background:#c6f6d5;color:#276749':'background:#fed7d7;color:#c53030'}">${t.status}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch(e) {
+    container.innerHTML = `
+      <div style="background:#fff5f5;border:1px solid var(--red);border-radius:10px;padding:16px;margin-bottom:14px;color:var(--red);font-size:12.5px;display:flex;justify-content:space-between;align-items:center">
+        <span>Failed to fetch CBS profile for Customer ID: ${c.customer_id}</span>
+        <button onclick="unlinkCustomer('${c.id}')" style="background:var(--red);color:#fff;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-weight:700;font-size:11px">Clear Link</button>
+      </div>
+    `;
+  }
+}
+
+async function linkCustomer(complaintId) {
+  const customerId = document.getElementById('cbsSearchInput')?.value?.trim();
+  if (!customerId) { showToast('Please enter a Customer ID','error'); return; }
+  try {
+    const res = await apiFetch(`/complaints/${complaintId}/link-customer`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({customer_id: customerId})
+    });
+    if (res.success) {
+      showToast('Complaint linked to customer profile.', 'success');
+      await loadAll();
+      const updated = ALL.find(x=>x.id===complaintId);
+      if (updated) {
+        detailComplaint = updated;
+        renderOverview(updated);
+        loadCustomerProfile(updated);
+      }
+    }
+  } catch(e) {
+    showToast('Customer ID not found in CBS.', 'error');
+  }
+}
+
+async function unlinkCustomer(complaintId) {
+  try {
+    await apiFetch(`/complaints/${complaintId}/link-customer`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({customer_id: null})
+    });
+    showToast('Customer link cleared.', 'success');
+    await loadAll();
+    const updated = ALL.find(x=>x.id===complaintId);
+    if (updated) {
+      detailComplaint = updated;
+      renderOverview(updated);
+      loadCustomerProfile(updated);
+    }
+  } catch(e) {
+    showToast('Failed to clear link.', 'error');
   }
 }
 

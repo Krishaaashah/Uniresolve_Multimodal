@@ -35,6 +35,9 @@ from app.services.clustering import get_clustering_service
 from app.services.pii_scrubber import mask_pii
 from app.services.store import get_store
 from app.services.triage import get_triage_service
+from app.config import (
+    GEMINI_API_KEY, ANTHROPIC_API_KEY, GEMINI_MODEL, CLAUDE_MODEL
+)
 
 router = APIRouter(prefix="/complaints", tags=["complaints"])
 limiter = Limiter(key_func=get_remote_address)
@@ -42,53 +45,123 @@ _root_cause_cache: dict[str, tuple[datetime, dict]] = {}
 
 
 def _claude_json(system: str, user: str, fallback: dict) -> dict:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return fallback
-    try:
-        import anthropic
+    if GEMINI_API_KEY:
+        try:
+            import httpx
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{
+                    "parts": [{"text": f"Instruction: {system}\n\nInput: {user}"}]
+                }],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                    "maxOutputTokens": 600
+                }
+            }
+            res = httpx.post(url, json=payload, headers=headers, timeout=15.0)
+            if res.status_code == 200:
+                data = res.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                start = text.find("{")
+                end = text.rfind("}") + 1
+                return json.loads(text[start:end])
+        except Exception:
+            pass
 
-        client = anthropic.Anthropic(api_key=api_key)
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=600,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        text = "".join(block.text for block in msg.content if getattr(block, "type", "") == "text").strip()
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        return json.loads(text[start:end])
-    except Exception:
-        return fallback
+    if ANTHROPIC_API_KEY:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            msg = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=600,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            text = "".join(block.text for block in msg.content if getattr(block, "type", "") == "text").strip()
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            return json.loads(text[start:end])
+        except Exception:
+            pass
+
+    return fallback
 
 
 def _claude_text(system: str, user: str, fallback: str) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return fallback
-    try:
-        import anthropic
+    if GEMINI_API_KEY:
+        try:
+            import httpx
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{
+                    "parts": [{"text": f"Instruction: {system}\n\nInput: {user}"}]
+                }],
+                "generationConfig": {
+                    "maxOutputTokens": 120
+                }
+            }
+            res = httpx.post(url, json=payload, headers=headers, timeout=15.0)
+            if res.status_code == 200:
+                data = res.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                if text:
+                    return text
+        except Exception:
+            pass
 
-        client = anthropic.Anthropic(api_key=api_key)
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=120,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        return "".join(block.text for block in msg.content if getattr(block, "type", "") == "text").strip() or fallback
-    except Exception:
-        return fallback
+    if ANTHROPIC_API_KEY:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            msg = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=120,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            return "".join(block.text for block in msg.content if getattr(block, "type", "") == "text").strip() or fallback
+        except Exception:
+            pass
+
+    return fallback
 
 
 @router.post("/ingest", response_model=ComplaintResponse, dependencies=[Depends(check_api_key)])
 @limiter.limit("60/minute")
 async def ingest_complaint(request: Request, payload: RawComplaintIn):
     store = get_store()
+    
+    # Process multimodal attachment if present
+    if payload.media_file and payload.media_type:
+        is_seed = payload.channel_metadata.get("seed") is True
+        is_replay = payload.source_ref and payload.source_ref.startswith("replay-")
+        if is_seed or is_replay:
+            if "voice_note" in payload.media_file or "audio" in payload.media_type:
+                media_desc = "[Simulated Audio Transcription]: Yes, hello. I was trying to withdraw 10,000 rupees from the Delhi Airport ATM. The machine failed to dispense cash but debited my account. Please reverse it."
+            else:
+                media_desc = "[Simulated Image Analysis]: Visual screenshot of a failed mobile banking app transaction. Customer Aarav Sharma, Account 9102837465, Rs 3,000.00 failed UPI transfer with reference UPI657483."
+        else:
+            from app.services.multimodal import process_multimodal_attachment
+            media_desc = process_multimodal_attachment(payload.media_file, payload.media_type)
+
+        if payload.raw_text:
+            payload.raw_text = f"{payload.raw_text}\n\n[Media Attachment Analysis ({payload.media_type})]:\n{media_desc}"
+        else:
+            payload.raw_text = media_desc
+
     masked_text, masked_fields = mask_pii(payload.raw_text)
-    triage_result = get_triage_service().triage(masked_text)
+    
+    # Conserve rate limits for background loops/seeding
+    is_seed = payload.channel_metadata.get("seed") is True
+    is_replay = payload.source_ref and payload.source_ref.startswith("replay-")
+    skip_ai_draft = is_seed or is_replay
+    
+    triage_result = get_triage_service().triage(masked_text, skip_ai_draft=skip_ai_draft)
     received_at = payload.received_at or datetime.utcnow()
+    
     complaint = Complaint(
         channel=payload.channel,
         channel_metadata=payload.channel_metadata,
@@ -100,6 +173,19 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
         received_at=received_at,
         triage=triage_result,
     )
+    
+    # Save the file using the complaint's unique ID to avoid namespace collisions
+    if payload.media_file and payload.media_type:
+        from app.services.multimodal import save_multimodal_file
+        saved_path = save_multimodal_file(complaint.id, payload.media_file, payload.media_type)
+        if saved_path:
+            if "attachments" not in complaint.channel_metadata:
+                complaint.channel_metadata["attachments"] = []
+            complaint.channel_metadata["attachments"].append({
+                "type": payload.media_type,
+                "url": saved_path
+            })
+
     complaint.communication_history.extend(
         [
             HistoryMessage(author=MessageAuthor.CUSTOMER, author_name="Customer", content=payload.raw_text, timestamp=received_at),
@@ -357,3 +443,14 @@ async def add_reply(complaint_id: str, msg: ReplyMessage):
     new_msg = HistoryMessage(author=msg.author, author_name=msg.author_name, content=msg.content, is_ai_draft=msg.is_ai_draft)
     updated = store.add_message(complaint_id, new_msg)
     return {"complaint_id": complaint_id, "message": new_msg, "complaint": updated}
+
+
+@router.post("/{complaint_id}/link-customer", dependencies=[Depends(check_api_key)])
+async def link_customer(complaint_id: str, payload: dict):
+    store = get_store()
+    c = store.get(complaint_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+    c.customer_id = payload.get("customer_id")
+    store.save(c)
+    return {"success": True, "complaint": c}

@@ -12,7 +12,8 @@ services:
       - DEBUG=True
       - API_KEY=${API_KEY:-dev-secret-key}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5000}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5000,http://localhost:8000}
     depends_on:
       - redis
     volumes:
