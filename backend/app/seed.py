@@ -154,6 +154,82 @@ def main():
 
     print(f"Seeded {len(saved)} complaints into backend/complaints.db")
 
+    # Seed transactions
+    transactions = []
+    known_customers = ["CUST-HIN1", "CUST-30482", "CUST-OLD1", "CUST-OLD2", "CUST-20591", "CUST-10245"]
+    channels = ["upi", "atm", "netbanking", "branch", "app"]
+    descriptions = {
+        "upi": ["UPI/GPay/Failed", "UPI/PhonePe/Transfer", "UPI/Zomato/Order", "UPI/AmazonPay/Refund"],
+        "atm": ["ATM/Cash Withdrawal", "ATM/Failed Dispense", "ATM/Balance Enquiry"],
+        "netbanking": ["IMPS/Transfer", "NEFT/Salary", "RTGS/Vendor Pay"],
+        "branch": ["Branch Deposit", "Branch Withdrawal", "DD Issue"],
+        "app": ["App Transfer/Self", "App/Recharge", "App/Bill Pay"]
+    }
+    
+    # Specific transactions for test verification
+    transactions.append({
+        "transaction_id": "TXN-HIN1-F1",
+        "customer_id": "CUST-HIN1",
+        "amount": "₹5,000.00",
+        "status": "failed",
+        "date": "2026-06-29",
+        "channel": "upi",
+        "description": "UPI/GPay/Failed/Rent"
+    })
+    transactions.append({
+        "transaction_id": "TXN-30482-F1",
+        "customer_id": "CUST-30482",
+        "amount": "₹18,500.00",
+        "status": "failed",
+        "date": "2026-06-28",
+        "channel": "app",
+        "description": "Card/Blocked Alert/Wrong PIN"
+    })
+    transactions.append({
+        "transaction_id": "TXN-OLD1-S1",
+        "customer_id": "CUST-OLD1",
+        "amount": "₹25,000.00",
+        "status": "success",
+        "date": "2026-05-01",
+        "channel": "branch",
+        "description": "Home Loan foreclosure processing fee"
+    })
+    transactions.append({
+        "transaction_id": "TXN-10245-F1",
+        "customer_id": "CUST-10245",
+        "amount": "₹3,000.00",
+        "status": "failed",
+        "date": "2026-06-30",
+        "channel": "app",
+        "description": "UPI/Transfer/Friend"
+    })
+    
+    # Generate random rows to total ~75 rows
+    import random
+    random.seed(42)
+    for i in range(1, 71):
+        cust = random.choice(known_customers)
+        channel = random.choice(channels)
+        status = random.choice(["success", "failed", "pending"])
+        amount_val = random.randint(100, 50000)
+        desc = random.choice(descriptions[channel])
+        dt_str = (datetime.utcnow() - timedelta(days=random.randint(0, 30))).date().isoformat()
+        
+        transactions.append({
+            "transaction_id": f"TXN-RAND-{i:03d}",
+            "customer_id": cust,
+            "amount": f"₹{amount_val:,.2f}",
+            "status": status,
+            "date": dt_str,
+            "channel": channel,
+            "description": f"{desc}/{i}"
+        })
+        
+    for tx in transactions:
+        store.save_transaction(tx)
+        
+    print(f"Seeded {len(transactions)} transactions into backend/complaints.db")
+
 
 if __name__ == "__main__":
     main()

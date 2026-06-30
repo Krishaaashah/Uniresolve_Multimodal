@@ -129,3 +129,17 @@ async def get_customer(customer_id: str):
         raise HTTPException(status_code=404, detail="Customer profile not found in CBS")
     return profile
 
+
+@app.get("/transactions/{transaction_id}", tags=["transactions"])
+async def get_transaction(transaction_id: str):
+    tx = get_store().get_transaction(transaction_id)
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return tx
+
+
+@app.get("/customers/{customer_id}/transactions", tags=["transactions"])
+async def get_customer_transactions(customer_id: str):
+    txs = get_store().get_transactions_for_customer(customer_id)
+    return txs
+

@@ -140,6 +140,20 @@ class ComplaintStore:
                 )
                 """
             )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS transactions (
+                    transaction_id TEXT PRIMARY KEY,
+                    customer_id TEXT,
+                    amount TEXT,
+                    status TEXT,
+                    date TEXT,
+                    channel TEXT,
+                    description TEXT
+                )
+                """
+            )
             # Auto-seed users if empty
             import hashlib
             def hash_pw(password: str) -> str:
@@ -435,9 +449,40 @@ class ComplaintStore:
                 return dict(row)
         return None
 
+    def get_transaction(self, transaction_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM transactions WHERE transaction_id = ?",
+                (transaction_id,)
+            ).fetchone()
+            if row:
+                return dict(row)
+        return None
+
+    def get_transactions_for_customer(self, customer_id: str) -> list[dict]:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM transactions WHERE customer_id = ? ORDER BY date DESC",
+                (customer_id,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def save_transaction(self, tx: dict):
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO transactions (
+                    transaction_id, customer_id, amount, status, date, channel, description
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (tx["transaction_id"], tx["customer_id"], tx["amount"], tx["status"], tx["date"], tx["channel"], tx["description"])
+            )
+            conn.commit()
+
     def clear(self):
         with self._connect() as conn:
             conn.execute("DELETE FROM complaints")
+            conn.execute("DELETE FROM transactions")
             conn.commit()
 
 
