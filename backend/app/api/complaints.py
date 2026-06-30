@@ -220,10 +220,79 @@ async def get_stats(current_user: dict = Depends(get_current_user)):
     return get_store().get_stats(tenant_id=tenant)
 
 
+_cluster_desc_cache = {}
+
+def generate_cluster_description(complaints_in_cluster: list[Complaint]) -> str:
+    """Generate a short, specific root-cause line via LLM with a deterministic fallback."""
+    if not complaints_in_cluster:
+        return "Unknown systemic issue"
+
+    # Get dominant category and key issues
+    categories = [str(c.triage.category) for c in complaints_in_cluster if c.triage and c.triage.category]
+    key_issues = [c.triage.key_issue for c in complaints_in_cluster if c.triage and c.triage.key_issue]
+    
+    dominant_category = Counter(categories).most_common(1)[0][0] if categories else "General"
+    dominant_key_issue = Counter(key_issues).most_common(1)[0][0] if key_issues else "similar issues reported"
+    
+    fallback = f"{dominant_category}: {dominant_key_issue}"
+    
+    if not (GEMINI_API_KEY or ANTHROPIC_API_KEY):
+        return fallback
+
+    # Prepare texts to summarize
+    texts = "\n".join(f"- {c.masked_text[:150]}" for c in complaints_in_cluster[:5])
+    
+    prompt = (
+        "Identify the single most specific core technical issue / root cause common to these bank complaints. "
+        "Be extremely brief and direct (max 8-10 words, e.g. 'Failed fund transfers in mobile banking', 'Unauthorized credit card transactions'). "
+        "Do not use generic sentences. Just return the raw short noun phrase."
+    )
+    
+    try:
+        desc = _claude_text(prompt, texts, fallback)
+        if desc and len(desc) < 100:
+            return desc.strip().strip('"').strip("'")
+    except Exception as e:
+        logger.warning(f"Error generating cluster root cause via LLM: {e}")
+        
+    return fallback
+
+def get_cached_cluster_description(cluster_id: str, complaints_in_cluster: list[Complaint]) -> str:
+    now = datetime.utcnow()
+    cached = _cluster_desc_cache.get(cluster_id)
+    if cached and now - cached[0] < timedelta(minutes=15):
+        return cached[1]
+    
+    desc = generate_cluster_description(complaints_in_cluster)
+    _cluster_desc_cache[cluster_id] = (now, desc)
+    return desc
+
+
 @router.get("/alerts")
 async def get_alerts(current_user: dict = Depends(get_current_user)):
     tenant = current_user.get("tenant_id", "Union Bank")
-    alerts = [c for c in get_store().all() if c.cluster and c.cluster.systemic_alert and c.tenant_id == tenant]
+    all_complaints = get_store().all()
+    tenant_complaints = [c for c in all_complaints if c.tenant_id == tenant]
+    
+    # Group tenant complaints by cluster_id
+    cluster_groups = defaultdict(list)
+    for c in tenant_complaints:
+        if c.cluster and c.cluster.cluster_id:
+            cluster_groups[c.cluster.cluster_id].append(c)
+            
+    alerts = []
+    for c in tenant_complaints:
+        if c.cluster and c.cluster.systemic_alert:
+            cl_id = c.cluster.cluster_id
+            cluster_size = len(cluster_groups[cl_id])
+            c.cluster.cluster_size = cluster_size
+            c.cluster.systemic_alert = cluster_size >= 5
+            
+            if c.cluster.systemic_alert:
+                desc = get_cached_cluster_description(cl_id, cluster_groups[cl_id])
+                c.cluster.cluster_description = desc
+                alerts.append(c)
+                
     return {"alerts": alerts, "count": len(alerts)}
 
 
@@ -348,10 +417,204 @@ async def get_complaint_groups(current_user: dict = Depends(get_current_user)):
     return groups
 
 
+@router.get("/clusters")
+async def get_complaint_clusters(current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    tenant = current_user.get("tenant_id", "Union Bank")
+    complaints = store.all()
+    if tenant:
+        complaints = [c for c in complaints if c.tenant_id == tenant]
+
+    cluster_map = defaultdict(lambda: {
+        "complaint_count": 0,
+        "customers": set(),
+        "severity_breakdown": defaultdict(int)
+    })
+
+    from app.services.triage import normalize_category
+    for c in complaints:
+        category_str = "General"
+        if hasattr(c, "triage") and c.triage and getattr(c.triage, "category", None):
+            category_str = normalize_category(str(c.triage.category))
+            
+        data = cluster_map[category_str]
+        data["complaint_count"] += 1
+        if c.customer_id:
+            data["customers"].add(c.customer_id)
+            
+        if hasattr(c, "triage") and c.triage and getattr(c.triage, "severity", None):
+            sev = c.triage.severity
+            sev_val = str(sev.value) if hasattr(sev, "value") else str(sev)
+            data["severity_breakdown"][sev_val] += 1
+        else:
+            data["severity_breakdown"]["medium"] += 1
+
+    result = []
+    for cat, info in cluster_map.items():
+        result.append({
+            "category": cat,
+            "complaint_count": info["complaint_count"],
+            "customer_count": len(info["customers"]),
+            "severity_breakdown": dict(info["severity_breakdown"])
+        })
+
+    result.sort(key=lambda x: x["customer_count"], reverse=True)
+    return result
+
+
 @router.get("/sla-breached", response_model=list[Complaint])
 async def sla_breached(current_user: dict = Depends(get_current_user)):
     tenant = current_user.get("tenant_id", "Union Bank")
     return [c for c in get_store().get_sla_breached() if c.tenant_id == tenant]
+
+
+@router.get("/{ticket_id}/duplicates")
+async def get_duplicates(ticket_id: str, current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    tenant = current_user.get("tenant_id", "Union Bank")
+    complaints = store.all()
+    if tenant:
+        complaints = [c for c in complaints if c.tenant_id == tenant]
+        
+    dups = [c for c in complaints if c.parent_ticket_id == ticket_id]
+    dups.sort(key=lambda x: x.received_at)
+    
+    distinct_channels = list(dict.fromkeys(c.channel.value.title() for c in dups))
+    tickets_data = [
+        {
+            "id": c.id,
+            "ticket_id": c.ticket_id,
+            "channel": c.channel.value.title(),
+            "timestamp": c.received_at.isoformat()
+        }
+        for c in dups
+    ]
+    return {
+        "count": len(dups),
+        "channels": distinct_channels,
+        "tickets": tickets_data
+    }
+
+
+@router.get("/{ticket_id}/timeline")
+async def get_complaint_timeline(ticket_id: str, current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    with store._connect() as conn:
+        row = conn.execute(
+            sa_text("SELECT * FROM complaints WHERE ticket_id = :id OR id = :id"),
+            {"id": ticket_id}
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+        
+    c = store._row_to_complaint(row)
+    complaint_id = c.id
+    
+    audit_logs = store.get_audit_logs(complaint_id=complaint_id)
+    audit_logs.sort(key=lambda x: x["timestamp"])
+    
+    steps = []
+    
+    # 1. Raised
+    steps.append({
+        "stage": "Raised",
+        "timestamp": c.received_at.isoformat(),
+        "actor": "Customer",
+        "completed": True
+    })
+    
+    # 2. Seen
+    seen_event = None
+    for log in audit_logs:
+        if log["action"] in ["view", "seen"]:
+            seen_event = log
+            break
+    if not seen_event:
+        for log in audit_logs:
+            if log["action"] not in ["ingest"]:
+                seen_event = log
+                break
+    if seen_event:
+        steps.append({
+            "stage": "Seen",
+            "timestamp": seen_event["timestamp"],
+            "actor": seen_event["actor"],
+            "completed": True
+        })
+    else:
+        steps.append({
+            "stage": "Seen",
+            "timestamp": None,
+            "actor": None,
+            "completed": False
+        })
+        
+    # 3. In Progress / Escalated
+    in_progress_event = None
+    for log in audit_logs:
+        if "escalate" in log["action"] or log["action"] in ["action: escalate", "action: reject"]:
+            in_progress_event = log
+            break
+    if in_progress_event:
+        steps.append({
+            "stage": "In Progress / Escalated",
+            "timestamp": in_progress_event["timestamp"],
+            "actor": in_progress_event["actor"],
+            "completed": True
+        })
+    elif c.status in [ComplaintStatus.ESCALATED, ComplaintStatus.IN_REVIEW]:
+        steps.append({
+            "stage": "In Progress / Escalated",
+            "timestamp": c.updated_at.isoformat(),
+            "actor": "Agent",
+            "completed": True
+        })
+    else:
+        steps.append({
+            "stage": "In Progress / Escalated",
+            "timestamp": None,
+            "actor": None,
+            "completed": False
+        })
+        
+    # 4. Resolved
+    if c.status == ComplaintStatus.RESOLVED and c.resolved_at:
+        resolved_actor = "Agent"
+        for log in audit_logs:
+            if log["action"] in ["action: approve", "resolve"]:
+                resolved_actor = log["actor"]
+                break
+        steps.append({
+            "stage": "Resolved",
+            "timestamp": c.resolved_at.isoformat(),
+            "actor": resolved_actor,
+            "completed": True
+        })
+    else:
+        steps.append({
+            "stage": "Resolved",
+            "timestamp": None,
+            "actor": None,
+            "completed": False
+        })
+        
+    current_stage = "Raised"
+    for s in steps:
+        if s["completed"]:
+            current_stage = s["stage"]
+            
+    end_time = c.resolved_at or datetime.utcnow()
+    elapsed = end_time - c.received_at
+    hours = int(elapsed.total_seconds() // 3600)
+    minutes = int((elapsed.total_seconds() % 3600) // 60)
+    elapsed_str = f"{hours}h {minutes}m"
+    
+    return {
+        "ticket_id": c.ticket_id,
+        "current_stage": current_stage,
+        "elapsed_time": elapsed_str,
+        "steps": steps
+    }
 
 
 @router.get("/root-cause")
@@ -546,6 +809,18 @@ async def list_complaints(
             (bool(c.triage) and s in c.triage.category.value.lower()) or
             s in c.channel.value.lower()
         ]
+    # Build mapping of parent_ticket_id -> list of child complaints across all tenant complaints
+    parent_map = defaultdict(list)
+    for c in complaints:
+        if c.parent_ticket_id:
+            parent_map[c.parent_ticket_id].append(c)
+            
+    for c in complaints:
+        if not c.parent_ticket_id and c.ticket_id in parent_map:
+            children = parent_map[c.ticket_id]
+            c.duplicate_count = len(children)
+            c.duplicate_channels = list(dict.fromkeys(ch.channel.value.title() for ch in children))
+
     complaints.sort(key=lambda c: c.received_at, reverse=True)
     return complaints[:limit]
 
@@ -566,10 +841,20 @@ async def get_complaint_audit(complaint_id: str, current_user: dict = Depends(ge
 
 
 @router.get("/{complaint_id}", response_model=Complaint)
-async def get_complaint(complaint_id: str):
+async def get_complaint(complaint_id: str, current_user: dict = Depends(get_current_user)):
     c = get_store().get(complaint_id)
     if not c:
         raise HTTPException(status_code=404, detail="Complaint not found")
+        
+    # Populate duplicate fields
+    tenant = current_user.get("tenant_id", "Union Bank")
+    all_tenant = [x for x in get_store().all() if x.tenant_id == tenant]
+    children = [x for x in all_tenant if x.parent_ticket_id == c.ticket_id]
+    c.duplicate_count = len(children)
+    c.duplicate_channels = list(dict.fromkeys(ch.channel.value.title() for ch in children))
+    
+    # Log audit event for view
+    get_store().log_audit(current_user.get("username", "agent"), current_user.get("role", "agent"), "view", complaint_id)
     return c
 
 

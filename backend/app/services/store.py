@@ -74,6 +74,8 @@ class ComplaintStore:
             conn.execute(sa_text("""
                 CREATE TABLE IF NOT EXISTS complaints (
                     id TEXT PRIMARY KEY,
+                    ticket_id TEXT UNIQUE,
+                    parent_ticket_id TEXT,
                     channel TEXT,
                     channel_metadata TEXT,
                     complaint_text TEXT,
@@ -120,6 +122,8 @@ class ComplaintStore:
                 "ALTER TABLE complaints ADD COLUMN summary TEXT",
                 "ALTER TABLE complaints ADD COLUMN detected_language TEXT DEFAULT 'English'",
                 "ALTER TABLE complaints ADD COLUMN tenant_id TEXT DEFAULT 'Union Bank'",
+                "ALTER TABLE complaints ADD COLUMN ticket_id TEXT",
+                "ALTER TABLE complaints ADD COLUMN parent_ticket_id TEXT",
             ]
             for sql in _optional_cols:
                 try:
@@ -210,7 +214,7 @@ class ComplaintStore:
             sev_reason = None
 
         triage = TriageResult(
-            category=Category(row["category"] or "general"),
+            category=row["category"] or "general",
             severity=severity,
             sentiment=Sentiment(row["sentiment"] or "neutral"),
             key_issue=key_issues[0] if key_issues else "",
@@ -246,8 +250,22 @@ class ComplaintStore:
         except Exception:
             sum_val = None
 
+        try:
+            tkt_id = row["ticket_id"]
+        except Exception:
+            tkt_id = None
+
+        try:
+            p_tkt_id = row["parent_ticket_id"]
+        except Exception:
+            p_tkt_id = None
+
+        import random
+
         return Complaint(
             id=row["id"],
+            ticket_id=tkt_id or f"TKT-{random.randint(100000, 999999)}",
+            parent_ticket_id=p_tkt_id,
             channel=Channel(row["channel"]),
             channel_metadata=_loads(row["channel_metadata"], {}),
             raw_text=row["complaint_text"] or "",
@@ -286,6 +304,16 @@ class ComplaintStore:
         complaint.sla_status = complaint.sla.status if complaint.sla else SLAStatus.ON_TRACK
         complaint.sla_breached = bool(complaint.sla and complaint.sla.breached)
 
+        # Resolve parent_ticket_id
+        if not complaint.parent_ticket_id:
+            if complaint.cluster and complaint.cluster.is_duplicate and complaint.cluster.duplicate_of:
+                matched = self.get(complaint.cluster.duplicate_of)
+                if matched:
+                    if getattr(matched, "parent_ticket_id", None):
+                        complaint.parent_ticket_id = matched.parent_ticket_id
+                    else:
+                        complaint.parent_ticket_id = matched.ticket_id
+
         key_issues = complaint.triage.key_issues if complaint.triage and complaint.triage.key_issues else []
         if complaint.triage and complaint.triage.key_issue and complaint.triage.key_issue not in key_issues:
             key_issues = [complaint.triage.key_issue, *key_issues]
@@ -294,14 +322,14 @@ class ComplaintStore:
             if _is_sqlite:
                 upsert_sql = sa_text("""
                 INSERT OR REPLACE INTO complaints (
-                    id, channel, channel_metadata, complaint_text, masked_text, masked_fields,
+                    id, ticket_id, parent_ticket_id, channel, channel_metadata, complaint_text, masked_text, masked_fields,
                     category, severity, sentiment, key_issues, draft_response, status,
                     assigned_agent, sla_deadline, sla_breached, duplicate_of, cluster_id,
                     duplicate_reason, severity_reason, summary, created_at, updated_at, resolved_at, customer_id, transaction_id, source_ref, received_at,
                     confidence, cluster_size, systemic_alert, escalation_level,
                     escalation_history, communication_history, agent_note,
                     detected_language, tenant_id
-                ) VALUES (:id,:channel,:channel_metadata,:complaint_text,:masked_text,:masked_fields,
+                ) VALUES (:id,:ticket_id,:parent_ticket_id,:channel,:channel_metadata,:complaint_text,:masked_text,:masked_fields,
                     :category,:severity,:sentiment,:key_issues,:draft_response,:status,
                     :assigned_agent,:sla_deadline,:sla_breached,:duplicate_of,:cluster_id,
                     :duplicate_reason,:severity_reason,:summary,:created_at,:updated_at,:resolved_at,:customer_id,:transaction_id,:source_ref,:received_at,
@@ -312,14 +340,14 @@ class ComplaintStore:
             else:
                 upsert_sql = sa_text("""
                 INSERT INTO complaints (
-                    id, channel, channel_metadata, complaint_text, masked_text, masked_fields,
+                    id, ticket_id, parent_ticket_id, channel, channel_metadata, complaint_text, masked_text, masked_fields,
                     category, severity, sentiment, key_issues, draft_response, status,
                     assigned_agent, sla_deadline, sla_breached, duplicate_of, cluster_id,
                     duplicate_reason, severity_reason, summary, created_at, updated_at, resolved_at, customer_id, transaction_id, source_ref, received_at,
                     confidence, cluster_size, systemic_alert, escalation_level,
                     escalation_history, communication_history, agent_note,
                     detected_language, tenant_id
-                ) VALUES (:id,:channel,:channel_metadata,:complaint_text,:masked_text,:masked_fields,
+                ) VALUES (:id,:ticket_id,:parent_ticket_id,:channel,:channel_metadata,:complaint_text,:masked_text,:masked_fields,
                     :category,:severity,:sentiment,:key_issues,:draft_response,:status,
                     :assigned_agent,:sla_deadline,:sla_breached,:duplicate_of,:cluster_id,
                     :duplicate_reason,:severity_reason,:summary,:created_at,:updated_at,:resolved_at,:customer_id,:transaction_id,:source_ref,:received_at,
@@ -327,6 +355,7 @@ class ComplaintStore:
                     :escalation_history,:communication_history,:agent_note,
                     :detected_language,:tenant_id)
                 ON CONFLICT (id) DO UPDATE SET
+                    parent_ticket_id=EXCLUDED.parent_ticket_id,
                     channel=EXCLUDED.channel, channel_metadata=EXCLUDED.channel_metadata,
                     complaint_text=EXCLUDED.complaint_text, masked_text=EXCLUDED.masked_text,
                     masked_fields=EXCLUDED.masked_fields, category=EXCLUDED.category,
@@ -348,6 +377,8 @@ class ComplaintStore:
                 """)
             conn.execute(upsert_sql, {
                     "id": complaint.id,
+                    "ticket_id": complaint.ticket_id,
+                    "parent_ticket_id": complaint.parent_ticket_id,
                     "channel": complaint.channel.value,
                     "channel_metadata": _json(complaint.channel_metadata),
                     "complaint_text": complaint.raw_text,
@@ -386,6 +417,25 @@ class ComplaintStore:
                 },
             )
             conn.commit()
+
+            if complaint.cluster and complaint.cluster.cluster_id:
+                cl_id = complaint.cluster.cluster_id
+                cursor = conn.execute(
+                    sa_text("SELECT COUNT(DISTINCT id) FROM complaints WHERE cluster_id = :cl_id"),
+                    {"cl_id": cl_id}
+                )
+                real_size = cursor.fetchone()[0]
+                is_systemic = int(real_size >= 5)
+                conn.execute(
+                    sa_text("""
+                        UPDATE complaints
+                        SET cluster_size = :size,
+                            systemic_alert = :alert
+                        WHERE cluster_id = :cl_id
+                    """),
+                    {"size": real_size, "alert": is_systemic, "cl_id": cl_id}
+                )
+                conn.commit()
 
         return complaint
 
@@ -593,6 +643,12 @@ class ComplaintStore:
             conn.execute(sa_text("DELETE FROM complaints"))
             conn.execute(sa_text("DELETE FROM transactions"))
             conn.commit()
+        from app.services.clustering import get_clustering_service
+        try:
+            get_clustering_service().clear()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Error resetting clustering in store.clear: {e}")
 
 
 

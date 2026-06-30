@@ -63,6 +63,47 @@ RESPONSE_TEMPLATES = {
 }
 
 
+def normalize_category(cat_str: str) -> str:
+    """Normalize and clean dynamic category names."""
+    if not cat_str:
+        return "General"
+    cat_str = cat_str.strip()
+    
+    # Obvious synonym mergers
+    lower = cat_str.lower()
+    
+    if any(x in lower for x in ["upi failure", "upi transaction failed", "upi transaction failure", "upi fail", "upi transfer failed"]):
+        return "UPI Failure"
+    if lower == "upi":
+        return "UPI Failure"
+        
+    if any(x in lower for x in ["card block", "debit card blocked", "card blocked", "card block request", "block card"]):
+        return "Card Blocking"
+        
+    if any(x in lower for x in ["home loan foreclosure", "loan foreclosure", "foreclosure letter", "foreclosure fee"]):
+        return "Loan Foreclosure"
+        
+    if any(x in lower for x in ["double debit", "charged twice", "double deduction", "emi debited twice"]):
+        return "Double Deduction"
+        
+    if any(x in lower for x in ["kyc update", "kyc pending", "kyc verification", "kyc pending for"]):
+        return "KYC Verification"
+
+    # Title capitalization
+    words = re.split(r'[\s_]+', cat_str)
+    cleaned_words = []
+    for w in words:
+        if not w:
+            continue
+        wl = w.lower()
+        if wl in ["upi", "kyc", "atm", "emi", "ivr", "sip"]:
+            cleaned_words.append(w.upper())
+        else:
+            cleaned_words.append(w.capitalize())
+            
+    return " ".join(cleaned_words)
+
+
 def _rule_based_triage(
     text: str,
     skip_ai_draft: bool = False,
@@ -74,11 +115,15 @@ def _rule_based_triage(
     lower = text.lower()
 
     # Category
-    category = Category.GENERAL
+    base_category = Category.GENERAL
     for cat, keywords in CATEGORY_KEYWORDS.items():
         if any(kw in lower for kw in keywords):
-            category = cat
+            base_category = cat
             break
+
+    # Map Category enum to a normalized string
+    category_str = base_category.value.replace("_", " ")
+    category_label = normalize_category(category_str)
 
     # Severity
     severity = Severity.MEDIUM
@@ -101,19 +146,19 @@ def _rule_based_triage(
     key_issue = sentences[0].strip()[:120] if sentences else text[:120]
 
     import uuid
-    fallback_response = RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES[Category.GENERAL]).format(
+    fallback_response = RESPONSE_TEMPLATES.get(base_category, RESPONSE_TEMPLATES[Category.GENERAL]).format(
         ref_id=str(uuid.uuid4())[:8].upper()
     )
     if skip_ai_draft:
         suggested_response = fallback_response
     else:
         suggested_response = generate_draft_response(
-            text, category, sentiment, severity, fallback_response, "English",
+            text, base_category, sentiment, severity, fallback_response, "English",
             transaction_note=transaction_note, customer_id=customer_id, transaction_id=transaction_id
         )
 
     return TriageResult(
-        category=category,
+        category=category_label,
         severity=severity,
         sentiment=sentiment,
         key_issue=key_issue,
@@ -123,6 +168,7 @@ def _rule_based_triage(
         detected_language="English",
         severity_reason=severity_reason
     )
+
 
 
 def generate_draft_response(
@@ -351,12 +397,13 @@ class TriageService:
                 " - high: Login issues, failed transactions where money was debited, blocked cards, or EMI double deduction\n"
                 " - medium: ATM swallowing card, KYC delays, app bugs, and general account updates\n"
                 " - low: General queries, interest rate requests, branch feedback\n\n"
+                "Determine a highly descriptive Category for the complaint (e.g. 'UPI Failure', 'KYC Pending', 'Card Payment Decline', 'Loan Foreclosure' etc.). "
+                "The category should be a short descriptive noun phrase (2-4 words, capitalized like 'UPI Failure').\n"
                 "Extract the main key issue as a short sentence (max 100 characters), "
                 "and a list of key issues (max 3 issues). "
                 "Identify the language of the complaint (e.g. English, Hindi, Marathi, etc.).\n"
                 "Provide a brief 'severity_reason' explaining your severity classification choice (max 150 characters).\n"
                 "Respond with a strict JSON object containing these exact keys.\n\n"
-                f"Allowed Categories: {[c.value for c in Category]}\n"
                 f"Allowed Severities: {[s.value for s in Severity]}\n"
                 f"Allowed Sentiments: {[s.value for s in Sentiment]}\n\n"
                 "Expected JSON format:\n"
@@ -372,7 +419,7 @@ class TriageService:
                 "}"
             )
             fallback_val = {
-                "category": "general",
+                "category": "General",
                 "severity": "medium",
                 "sentiment": "neutral",
                 "key_issue": masked_text[:120],
@@ -383,13 +430,32 @@ class TriageService:
             }
             res = _claude_json(system_prompt, masked_text, fallback_val)
 
-            # Validate and coerce
-            category_str = res.get("category", "general").lower()
-            category = Category.GENERAL
-            for c in Category:
-                if c.value == category_str or c.value in category_str:
-                    category = c
-                    break
+            # Validate and normalize category
+            category_str = normalize_category(res.get("category", "General"))
+            
+            # Map dynamic category back to base Category enum for templates
+            base_category = Category.GENERAL
+            lower_cat = category_str.lower()
+            if "upi" in lower_cat:
+                base_category = Category.UPI
+            elif "card" in lower_cat:
+                base_category = Category.CREDIT_CARD
+            elif "loan" in lower_cat:
+                base_category = Category.LOAN
+            elif "insurance" in lower_cat:
+                base_category = Category.INSURANCE
+            elif "invest" in lower_cat:
+                base_category = Category.INVESTMENT
+            elif "fraud" in lower_cat or "scam" in lower_cat:
+                base_category = Category.FRAUD
+            elif "atm" in lower_cat:
+                base_category = Category.ATM
+            elif "kyc" in lower_cat:
+                base_category = Category.KYC
+            elif "mobile" in lower_cat:
+                base_category = Category.MOBILE_BANKING
+            elif "netbanking" in lower_cat or "internet banking" in lower_cat:
+                base_category = Category.NETBANKING
 
             severity_str = res.get("severity", "medium").lower()
             severity = Severity.MEDIUM
@@ -412,16 +478,16 @@ class TriageService:
             severity_reason = res.get("severity_reason", "Classified via LLM triage engine.")
 
             import uuid
-            fallback_response = RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES[Category.GENERAL]).format(
+            fallback_response = RESPONSE_TEMPLATES.get(base_category, RESPONSE_TEMPLATES[Category.GENERAL]).format(
                 ref_id=str(uuid.uuid4())[:8].upper()
             )
             suggested_response = generate_draft_response(
-                masked_text, category, sentiment, severity, fallback_response, detected_language,
+                masked_text, base_category, sentiment, severity, fallback_response, detected_language,
                 transaction_note=transaction_note, customer_id=customer_id, transaction_id=transaction_id
             )
 
             return TriageResult(
-                category=category,
+                category=category_str,
                 severity=severity,
                 sentiment=sentiment,
                 key_issue=key_issue,

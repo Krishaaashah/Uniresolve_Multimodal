@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import random
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Optional
@@ -140,6 +141,7 @@ class DuplicateCluster(BaseModel):
     cluster_size: int = 1
     systemic_alert: bool = False
     duplicate_reason: Optional[str] = None
+    cluster_description: Optional[str] = None
 
 
 class SLAInfo(BaseModel):
@@ -173,6 +175,10 @@ class EscalationRecord(BaseModel):
 
 class Complaint(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    ticket_id: str = Field(default_factory=lambda: f"TKT-{random.randint(100000, 999999)}")
+    parent_ticket_id: Optional[str] = None
+    duplicate_count: int = 0
+    duplicate_channels: list[str] = Field(default_factory=list)
     channel: Channel
     channel_metadata: dict[str, Any] = Field(default_factory=dict)
     raw_text: str

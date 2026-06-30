@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parents[2]
 INDEX_PATH = BASE_DIR / "faiss_index.bin"
 MAP_PATH = BASE_DIR / "cluster_map.json"
-SIMILARITY_THRESHOLD = 0.80      # cosine similarity to be considered duplicate
+SIMILARITY_THRESHOLD = 0.88      # cosine similarity to be considered duplicate
 CLUSTER_ALERT_THRESHOLD = 5      # complaints in a cluster → systemic alert
 EMBEDDING_DIM = 384              # all-MiniLM-L6-v2 output size
 
@@ -191,6 +191,27 @@ class ClusteringService:
     def get_cluster_complaints(self, cluster_id: str) -> list[str]:
         """Return all complaint IDs in a given cluster."""
         return [cid for cid, clid in self.cluster_map.items() if clid == cluster_id]
+
+    def clear(self):
+        """Reset the FAISS index and local metadata maps, and delete local cache files."""
+        with self.lock:
+            import faiss
+            self.index = faiss.IndexFlatIP(EMBEDDING_DIM)
+            self.id_map = []
+            self.cluster_map = {}
+            self.cluster_counts = {}
+            
+            if INDEX_PATH.exists():
+                try:
+                    INDEX_PATH.unlink()
+                except Exception as e:
+                    logger.warning(f"Error deleting INDEX_PATH: {e}")
+            if MAP_PATH.exists():
+                try:
+                    MAP_PATH.unlink()
+                except Exception as e:
+                    logger.warning(f"Error deleting MAP_PATH: {e}")
+            logger.info("Semantic duplicate detection index cleared.")
 
 
 # Singleton
