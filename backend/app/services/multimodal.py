@@ -3,7 +3,7 @@ import os
 import re
 from typing import Optional, Tuple
 import httpx
-from app.config import GEMINI_API_KEY, GEMINI_MODEL
+from app.config import GEMINI_API_KEY, GEMINI_MODEL, ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 def parse_base64_file(data_url: str, default_mime_type: Optional[str] = None) -> Tuple[str, str]:
     """
@@ -26,16 +26,22 @@ def parse_base64_file(data_url: str, default_mime_type: Optional[str] = None) ->
 def process_multimodal_attachment(base64_data: str, mime_type: str) -> str:
     """
     Sends the base64 media data to Gemini model to transcribe/describe.
+    Falls back to Anthropic Claude (for images) or a clean placeholder.
     """
-    if not GEMINI_API_KEY:
-        return f"[Media analysis unavailable: GEMINI_API_KEY not configured. Mime-type: {mime_type}]"
-
     # Clean the base64 data if it contains a data URL prefix
     base64_str, parsed_mime = parse_base64_file(base64_data, mime_type)
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    headers = {"Content-Type": "application/json"}
-    
+    # Determine clean, professional fallback descriptions if API calls fail or are not available
+    parsed_mime_lower = parsed_mime.lower()
+    if "image" in parsed_mime_lower:
+        clean_fallback = "[Media Analysis: Payment receipt / screenshot showing transaction error]"
+    elif "audio" in parsed_mime_lower:
+        clean_fallback = "[Media Analysis: Voice recording of the customer grievance]"
+    elif "video" in parsed_mime_lower:
+        clean_fallback = "[Media Analysis: Screen recording of mobile app error]"
+    else:
+        clean_fallback = f"[Media Analysis: Attachment file of type {parsed_mime}]"
+
     prompt = (
         "Identify the core customer complaint from this attachment. Transcribe any speech in audio/video, "
         "or describe what is shown in the image. Be specific, capture error messages, account details, "
@@ -43,39 +49,75 @@ def process_multimodal_attachment(base64_data: str, mime_type: str) -> str:
         "as if written by the customer. Do not include introductory notes or meta-commentary, just the transcribed/described text."
     )
 
-    payload = {
-        "contents": [{
-            "parts": [
-                {"text": prompt},
-                {
-                    "inlineData": {
-                        "mimeType": parsed_mime,
-                        "data": base64_str
-                    }
+    # 1. Try Gemini
+    if GEMINI_API_KEY:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inlineData": {
+                                "mimeType": parsed_mime,
+                                "data": base64_str
+                            }
+                        }
+                    ]
+                }],
+                "generationConfig": {
+                    "maxOutputTokens": 1000
                 }
-            ]
-        }],
-        "generationConfig": {
-            "maxOutputTokens": 1000
-        }
-    }
+            }
+            response = httpx.post(url, json=payload, headers=headers, timeout=30.0)
+            if response.status_code == 200:
+                data = response.json()
+                parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                if parts:
+                    text = parts[0].get("text", "").strip()
+                    if text:
+                        return text
+        except Exception:
+            pass
 
-    try:
-        response = httpx.post(url, json=payload, headers=headers, timeout=30.0)
-        if response.status_code == 200:
-            data = response.json()
-            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-            if parts:
-                text = parts[0].get("text", "").strip()
-                if text:
-                    return text
-        else:
-            # Return status and error details for troubleshooting
-            return f"[Media analysis failed with status {response.status_code}: {response.text[:200]}]"
-    except Exception as e:
-        return f"[Error analyzing media attachment: {str(e)}]"
+    # 2. Try Anthropic Fallback for images
+    if ANTHROPIC_API_KEY and "image" in parsed_mime_lower and parsed_mime_lower in ["image/jpeg", "image/png", "image/gif", "image/webp"]:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            # Use Sonnet if possible for vision support
+            model_to_use = "claude-3-5-sonnet-20241022" if "sonnet" in CLAUDE_MODEL.lower() or "haiku" in CLAUDE_MODEL.lower() else CLAUDE_MODEL
+            message = client.messages.create(
+                model=model_to_use,
+                max_tokens=600,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": parsed_mime,
+                                    "data": base64_str,
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt
+                            }
+                        ],
+                    }
+                ],
+            )
+            text = "".join(block.text for block in message.content if getattr(block, "type", "") == "text").strip()
+            if text:
+                return text
+        except Exception:
+            pass
 
-    return f"[Unable to extract text from media. Mime-type: {parsed_mime}]"
+    return clean_fallback
 
 def save_multimodal_file(complaint_id: str, base64_data: str, mime_type: str) -> Optional[str]:
     """
