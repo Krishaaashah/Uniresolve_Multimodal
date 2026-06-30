@@ -777,7 +777,12 @@ const CHANNELS = {
 const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\uFE0F\u200D]/gu;
 function icon(name, cls=''){ return `<svg class="icon ${cls}"><use href="#i-${name}"></use></svg>`; }
 function cleanText(value=''){
-  return String(value).replace(EMOJI_RE,'').replace(/\*/g,'').replace(/\s{2,}/g,' ').trim();
+  return String(value)
+    .replace(EMOJI_RE,'')
+    .replace(/\*/g,'')
+    .replace(/^\s*complaint\s+summary:\s*/i, '')
+    .replace(/\s{2,}/g,' ')
+    .trim();
 }
 function channelMeta(c){ return CHANNELS[c] || {label:'Complaint',icon:'list'}; }
 function channelLabel(c){ return channelMeta(c).label; }

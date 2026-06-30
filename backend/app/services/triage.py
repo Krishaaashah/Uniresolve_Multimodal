@@ -550,6 +550,9 @@ def generate_summary(text: str) -> str:
                 data = res.json()
                 summary_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                 if summary_text:
+                    summary_text = summary_text.replace("**", "").replace("*", "").strip()
+                    if summary_text.lower().startswith("complaint summary:"):
+                        summary_text = summary_text[len("complaint summary:"):].strip()
                     return summary_text
         except Exception as e:
             logger.warning(f"Gemini summary generation failed: {e}")
@@ -565,6 +568,10 @@ def generate_summary(text: str) -> str:
                 messages=[{"role": "user", "content": text}],
             )
             summary_text = "".join(block.text for block in message.content if getattr(block, "type", "") == "text").strip()
+            if summary_text:
+                summary_text = summary_text.replace("**", "").replace("*", "").strip()
+                if summary_text.lower().startswith("complaint summary:"):
+                    summary_text = summary_text[len("complaint summary:"):].strip()
             return summary_text or fallback
         except Exception as e:
             logger.warning(f"Claude summary generation failed: {e}")
