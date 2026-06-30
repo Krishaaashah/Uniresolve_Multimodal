@@ -1,13 +1,20 @@
-"""SQLite-backed complaint store for the hackathon demo."""
+"""SQLAlchemy-backed complaint store — works with Postgres or SQLite.
+
+If DATABASE_URL is set in the environment the store connects to Postgres;
+otherwise it falls back to a local SQLite file (complaints.db) with no
+additional configuration required.
+"""
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
+
+from sqlalchemy import text as sa_text
+from app.db import engine as _sa_engine
 
 from app.models.complaint import (
     Category,
@@ -52,20 +59,19 @@ def _loads(value: str | None, default: Any):
 
 
 class ComplaintStore:
-    def __init__(self, db_path: Path = DB_PATH):
-        self.db_path = db_path
+    def __init__(self):
         self._init_db()
 
+    # ── Internal helpers ──────────────────────────────────────────────────────
     def _connect(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        """Return a raw DBAPI connection from the SQLAlchemy engine."""
+        return _sa_engine.connect()
 
     def _init_db(self):
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        from sqlalchemy.exc import OperationalError as SAOperationalError
+        
         with self._connect() as conn:
-            conn.execute(
-                """
+            conn.execute(sa_text("""
                 CREATE TABLE IF NOT EXISTS complaints (
                     id TEXT PRIMARY KEY,
                     channel TEXT,
@@ -104,52 +110,37 @@ class ComplaintStore:
                     detected_language TEXT DEFAULT 'English',
                     tenant_id TEXT DEFAULT 'Union Bank'
                 )
-                """
-            )
-            # Safe table alterations in case database already existed
-            try:
-                conn.execute("ALTER TABLE complaints ADD COLUMN transaction_id TEXT")
-            except sqlite3.OperationalError:
-                pass
-            try:
-                conn.execute("ALTER TABLE complaints ADD COLUMN duplicate_reason TEXT")
-            except sqlite3.OperationalError:
-                pass
-            try:
-                conn.execute("ALTER TABLE complaints ADD COLUMN severity_reason TEXT")
-            except sqlite3.OperationalError:
-                pass
-            try:
-                conn.execute("ALTER TABLE complaints ADD COLUMN summary TEXT")
-            except sqlite3.OperationalError:
-                pass
-            try:
-                conn.execute("ALTER TABLE complaints ADD COLUMN detected_language TEXT DEFAULT 'English'")
-            except sqlite3.OperationalError:
-                pass
-            try:
-                conn.execute("ALTER TABLE complaints ADD COLUMN tenant_id TEXT DEFAULT 'Union Bank'")
-            except sqlite3.OperationalError:
-                pass
+            """))
 
-            # Create users and audit_log tables
-            conn.execute(
-                """
+            # Safe column additions for pre-existing databases
+            _optional_cols = [
+                "ALTER TABLE complaints ADD COLUMN transaction_id TEXT",
+                "ALTER TABLE complaints ADD COLUMN duplicate_reason TEXT",
+                "ALTER TABLE complaints ADD COLUMN severity_reason TEXT",
+                "ALTER TABLE complaints ADD COLUMN summary TEXT",
+                "ALTER TABLE complaints ADD COLUMN detected_language TEXT DEFAULT 'English'",
+                "ALTER TABLE complaints ADD COLUMN tenant_id TEXT DEFAULT 'Union Bank'",
+            ]
+            for sql in _optional_cols:
+                try:
+                    conn.execute(sa_text(sql))
+                except SAOperationalError:
+                    pass  # column already exists
+
+            conn.execute(sa_text("""
                 CREATE TABLE IF NOT EXISTS users (
                     username TEXT PRIMARY KEY,
                     password_hash TEXT,
                     role TEXT,
                     tenant_id TEXT DEFAULT 'Union Bank'
                 )
-                """
-            )
+            """))
             try:
-                conn.execute("ALTER TABLE users ADD COLUMN tenant_id TEXT DEFAULT 'Union Bank'")
-            except sqlite3.OperationalError:
+                conn.execute(sa_text("ALTER TABLE users ADD COLUMN tenant_id TEXT DEFAULT 'Union Bank'"))
+            except SAOperationalError:
                 pass
 
-            conn.execute(
-                """
+            conn.execute(sa_text("""
                 CREATE TABLE IF NOT EXISTS audit_log (
                     id TEXT PRIMARY KEY,
                     actor TEXT,
@@ -158,11 +149,9 @@ class ComplaintStore:
                     complaint_id TEXT,
                     timestamp TEXT
                 )
-                """
-            )
+            """))
 
-            conn.execute(
-                """
+            conn.execute(sa_text("""
                 CREATE TABLE IF NOT EXISTS transactions (
                     transaction_id TEXT PRIMARY KEY,
                     customer_id TEXT,
@@ -172,26 +161,33 @@ class ComplaintStore:
                     channel TEXT,
                     description TEXT
                 )
-                """
-            )
+            """))
+
             # Auto-seed users if empty
             import hashlib
             def hash_pw(password: str) -> str:
                 return hashlib.sha256(password.encode()).hexdigest()
 
-            cursor = conn.execute("SELECT COUNT(*) FROM users")
+            cursor = conn.execute(sa_text("SELECT COUNT(*) FROM users"))
             if cursor.fetchone()[0] == 0:
-                conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", ("agent", hash_pw("agent123"), "agent", "Union Bank"))
-                conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", ("supervisor", hash_pw("supervisor123"), "supervisor", "Union Bank"))
-                conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", ("admin", hash_pw("admin123"), "admin", "Union Bank"))
-                conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", ("sub_agent", hash_pw("sub_agent123"), "agent", "UBI Subsidiary"))
-            
+                _users = [
+                    ("agent",      hash_pw("agent123"),      "agent",      "Union Bank"),
+                    ("supervisor", hash_pw("supervisor123"), "supervisor", "Union Bank"),
+                    ("admin",      hash_pw("admin123"),      "admin",      "Union Bank"),
+                    ("sub_agent",  hash_pw("sub_agent123"),  "agent",      "UBI Subsidiary"),
+                ]
+                for u in _users:
+                    conn.execute(
+                        sa_text("INSERT INTO users VALUES (:u, :p, :r, :t)"),
+                        {"u": u[0], "p": u[1], "r": u[2], "t": u[3]}
+                    )
             conn.commit()
 
 
-
-
-    def _row_to_complaint(self, row: sqlite3.Row) -> Complaint:
+    def _row_to_complaint(self, row) -> Complaint:
+        # Convert SQLAlchemy Row to a plain dict for uniform key access
+        if not isinstance(row, dict):
+            row = dict(row._mapping)
         key_issues = _loads(row["key_issues"], [])
         received_at = _dt(row["received_at"]) or _dt(row["created_at"]) or datetime.utcnow()
         severity = Severity(row["severity"] or "medium")
@@ -294,8 +290,9 @@ class ComplaintStore:
         if complaint.triage and complaint.triage.key_issue and complaint.triage.key_issue not in key_issues:
             key_issues = [complaint.triage.key_issue, *key_issues]
         with self._connect() as conn:
-            conn.execute(
-                """
+            _is_sqlite = "sqlite" in str(_sa_engine.url)
+            if _is_sqlite:
+                upsert_sql = sa_text("""
                 INSERT OR REPLACE INTO complaints (
                     id, channel, channel_metadata, complaint_text, masked_text, masked_fields,
                     category, severity, sentiment, key_issues, draft_response, status,
@@ -304,46 +301,89 @@ class ComplaintStore:
                     confidence, cluster_size, systemic_alert, escalation_level,
                     escalation_history, communication_history, agent_note,
                     detected_language, tenant_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    complaint.id,
-                    complaint.channel.value,
-                    _json(complaint.channel_metadata),
-                    complaint.raw_text,
-                    complaint.masked_text,
-                    _json(complaint.masked_fields),
-                    complaint.triage.category.value if complaint.triage else Category.GENERAL.value,
-                    complaint.triage.severity.value if complaint.triage else Severity.MEDIUM.value,
-                    complaint.triage.sentiment.value if complaint.triage else Sentiment.NEUTRAL.value,
-                    _json(key_issues),
-                    complaint.triage.suggested_response if complaint.triage else "",
-                    complaint.status.value,
-                    complaint.assigned_agent,
-                    complaint.sla.deadline.isoformat() if complaint.sla else None,
-                    int(complaint.sla_breached),
-                    complaint.cluster.duplicate_of if complaint.cluster else None,
-                    complaint.cluster.cluster_id if complaint.cluster else None,
-                    complaint.cluster.duplicate_reason if complaint.cluster else None,
-                    complaint.triage.severity_reason if complaint.triage else None,
-                    complaint.summary,
-                    complaint.created_at.isoformat(),
-                    complaint.updated_at.isoformat(),
-                    complaint.resolved_at.isoformat() if complaint.resolved_at else None,
-                    complaint.customer_id,
-                    complaint.transaction_id,
-                    complaint.source_ref,
-                    complaint.received_at.isoformat(),
-                    complaint.triage.confidence if complaint.triage else 0.75,
-                    complaint.cluster.cluster_size if complaint.cluster else 1,
-                    int(complaint.cluster.systemic_alert) if complaint.cluster else 0,
-                    complaint.escalation_level.value,
-                    _json([e.model_dump(mode="json") for e in complaint.escalation_history]),
-                    _json([h.model_dump(mode="json") for h in complaint.communication_history]),
-                    complaint.agent_note,
-                    complaint.triage.detected_language if complaint.triage else "English",
-                    complaint.tenant_id,
-                ),
+                ) VALUES (:id,:channel,:channel_metadata,:complaint_text,:masked_text,:masked_fields,
+                    :category,:severity,:sentiment,:key_issues,:draft_response,:status,
+                    :assigned_agent,:sla_deadline,:sla_breached,:duplicate_of,:cluster_id,
+                    :duplicate_reason,:severity_reason,:summary,:created_at,:updated_at,:resolved_at,:customer_id,:transaction_id,:source_ref,:received_at,
+                    :confidence,:cluster_size,:systemic_alert,:escalation_level,
+                    :escalation_history,:communication_history,:agent_note,
+                    :detected_language,:tenant_id)
+                """)
+            else:
+                upsert_sql = sa_text("""
+                INSERT INTO complaints (
+                    id, channel, channel_metadata, complaint_text, masked_text, masked_fields,
+                    category, severity, sentiment, key_issues, draft_response, status,
+                    assigned_agent, sla_deadline, sla_breached, duplicate_of, cluster_id,
+                    duplicate_reason, severity_reason, summary, created_at, updated_at, resolved_at, customer_id, transaction_id, source_ref, received_at,
+                    confidence, cluster_size, systemic_alert, escalation_level,
+                    escalation_history, communication_history, agent_note,
+                    detected_language, tenant_id
+                ) VALUES (:id,:channel,:channel_metadata,:complaint_text,:masked_text,:masked_fields,
+                    :category,:severity,:sentiment,:key_issues,:draft_response,:status,
+                    :assigned_agent,:sla_deadline,:sla_breached,:duplicate_of,:cluster_id,
+                    :duplicate_reason,:severity_reason,:summary,:created_at,:updated_at,:resolved_at,:customer_id,:transaction_id,:source_ref,:received_at,
+                    :confidence,:cluster_size,:systemic_alert,:escalation_level,
+                    :escalation_history,:communication_history,:agent_note,
+                    :detected_language,:tenant_id)
+                ON CONFLICT (id) DO UPDATE SET
+                    channel=EXCLUDED.channel, channel_metadata=EXCLUDED.channel_metadata,
+                    complaint_text=EXCLUDED.complaint_text, masked_text=EXCLUDED.masked_text,
+                    masked_fields=EXCLUDED.masked_fields, category=EXCLUDED.category,
+                    severity=EXCLUDED.severity, sentiment=EXCLUDED.sentiment,
+                    key_issues=EXCLUDED.key_issues, draft_response=EXCLUDED.draft_response,
+                    status=EXCLUDED.status, assigned_agent=EXCLUDED.assigned_agent,
+                    sla_deadline=EXCLUDED.sla_deadline, sla_breached=EXCLUDED.sla_breached,
+                    duplicate_of=EXCLUDED.duplicate_of, cluster_id=EXCLUDED.cluster_id,
+                    duplicate_reason=EXCLUDED.duplicate_reason, severity_reason=EXCLUDED.severity_reason,
+                    summary=EXCLUDED.summary, updated_at=EXCLUDED.updated_at,
+                    resolved_at=EXCLUDED.resolved_at, customer_id=EXCLUDED.customer_id,
+                    transaction_id=EXCLUDED.transaction_id, confidence=EXCLUDED.confidence,
+                    cluster_size=EXCLUDED.cluster_size, systemic_alert=EXCLUDED.systemic_alert,
+                    escalation_level=EXCLUDED.escalation_level,
+                    escalation_history=EXCLUDED.escalation_history,
+                    communication_history=EXCLUDED.communication_history,
+                    agent_note=EXCLUDED.agent_note, detected_language=EXCLUDED.detected_language,
+                    tenant_id=EXCLUDED.tenant_id
+                """)
+            conn.execute(upsert_sql, {
+                    "id": complaint.id,
+                    "channel": complaint.channel.value,
+                    "channel_metadata": _json(complaint.channel_metadata),
+                    "complaint_text": complaint.raw_text,
+                    "masked_text": complaint.masked_text,
+                    "masked_fields": _json(complaint.masked_fields),
+                    "category": complaint.triage.category.value if complaint.triage else Category.GENERAL.value,
+                    "severity": complaint.triage.severity.value if complaint.triage else Severity.MEDIUM.value,
+                    "sentiment": complaint.triage.sentiment.value if complaint.triage else Sentiment.NEUTRAL.value,
+                    "key_issues": _json(key_issues),
+                    "draft_response": complaint.triage.suggested_response if complaint.triage else "",
+                    "status": complaint.status.value,
+                    "assigned_agent": complaint.assigned_agent,
+                    "sla_deadline": complaint.sla.deadline.isoformat() if complaint.sla else None,
+                    "sla_breached": int(complaint.sla_breached),
+                    "duplicate_of": complaint.cluster.duplicate_of if complaint.cluster else None,
+                    "cluster_id": complaint.cluster.cluster_id if complaint.cluster else None,
+                    "duplicate_reason": complaint.cluster.duplicate_reason if complaint.cluster else None,
+                    "severity_reason": complaint.triage.severity_reason if complaint.triage else None,
+                    "summary": complaint.summary,
+                    "created_at": complaint.created_at.isoformat(),
+                    "updated_at": complaint.updated_at.isoformat(),
+                    "resolved_at": complaint.resolved_at.isoformat() if complaint.resolved_at else None,
+                    "customer_id": complaint.customer_id,
+                    "transaction_id": complaint.transaction_id,
+                    "source_ref": complaint.source_ref,
+                    "received_at": complaint.received_at.isoformat(),
+                    "confidence": complaint.triage.confidence if complaint.triage else 0.75,
+                    "cluster_size": complaint.cluster.cluster_size if complaint.cluster else 1,
+                    "systemic_alert": int(complaint.cluster.systemic_alert) if complaint.cluster else 0,
+                    "escalation_level": complaint.escalation_level.value,
+                    "escalation_history": _json([e.model_dump(mode="json") for e in complaint.escalation_history]),
+                    "communication_history": _json([h.model_dump(mode="json") for h in complaint.communication_history]),
+                    "agent_note": complaint.agent_note,
+                    "detected_language": complaint.triage.detected_language if complaint.triage else "English",
+                    "tenant_id": complaint.tenant_id,
+                },
             )
             conn.commit()
 
@@ -351,12 +391,15 @@ class ComplaintStore:
 
     def get(self, complaint_id: str) -> Optional[Complaint]:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
+            row = conn.execute(
+                sa_text("SELECT * FROM complaints WHERE id = :id"),
+                {"id": complaint_id}
+            ).fetchone()
         return self._row_to_complaint(row) if row else None
 
     def all(self) -> list[Complaint]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM complaints").fetchall()
+            rows = conn.execute(sa_text("SELECT * FROM complaints")).fetchall()
         return [self._row_to_complaint(row) for row in rows]
 
     def update_status(self, complaint_id: str, status: ComplaintStatus, agent_note: Optional[str] = None) -> Optional[Complaint]:
@@ -467,8 +510,8 @@ class ComplaintStore:
         import uuid
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO audit_log (id, actor, role, action, complaint_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), actor, role, action, complaint_id, datetime.utcnow().isoformat())
+                sa_text("INSERT INTO audit_log (id, actor, role, action, complaint_id, timestamp) VALUES (:id,:actor,:role,:action,:complaint_id,:ts)"),
+                {"id": str(uuid.uuid4()), "actor": actor, "role": role, "action": action, "complaint_id": complaint_id, "ts": datetime.utcnow().isoformat()}
             )
             conn.commit()
 
@@ -476,12 +519,12 @@ class ComplaintStore:
         with self._connect() as conn:
             if complaint_id:
                 cursor = conn.execute(
-                    "SELECT * FROM audit_log WHERE complaint_id = ? ORDER BY timestamp DESC",
-                    (complaint_id,)
+                    sa_text("SELECT * FROM audit_log WHERE complaint_id = :id ORDER BY timestamp DESC"),
+                    {"id": complaint_id}
                 )
             else:
-                cursor = conn.execute("SELECT * FROM audit_log ORDER BY timestamp DESC")
-            return [dict(row) for row in cursor.fetchall()]
+                cursor = conn.execute(sa_text("SELECT * FROM audit_log ORDER BY timestamp DESC"))
+            return [dict(row._mapping) for row in cursor.fetchall()]
 
     def verify_user(self, username: str, password_plain: str) -> Optional[dict]:
         import hashlib
@@ -490,47 +533,65 @@ class ComplaintStore:
 
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM users WHERE username = ? AND password_hash = ?",
-                (username, hash_pw(password_plain))
+                sa_text("SELECT * FROM users WHERE username = :u AND password_hash = :p"),
+                {"u": username, "p": hash_pw(password_plain)}
             ).fetchone()
             if row:
-                return dict(row)
+                return dict(row._mapping)
         return None
 
     def get_transaction(self, transaction_id: str) -> Optional[dict]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM transactions WHERE transaction_id = ?",
-                (transaction_id,)
+                sa_text("SELECT * FROM transactions WHERE transaction_id = :tid"),
+                {"tid": transaction_id}
             ).fetchone()
             if row:
-                return dict(row)
+                return dict(row._mapping)
         return None
 
     def get_transactions_for_customer(self, customer_id: str) -> list[dict]:
         with self._connect() as conn:
             cursor = conn.execute(
-                "SELECT * FROM transactions WHERE customer_id = ? ORDER BY date DESC",
-                (customer_id,)
+                sa_text("SELECT * FROM transactions WHERE customer_id = :cid ORDER BY date DESC"),
+                {"cid": customer_id}
             )
-            return [dict(row) for row in cursor.fetchall()]
+            return [dict(row._mapping) for row in cursor.fetchall()]
 
     def save_transaction(self, tx: dict):
         with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO transactions (
-                    transaction_id, customer_id, amount, status, date, channel, description
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (tx["transaction_id"], tx["customer_id"], tx["amount"], tx["status"], tx["date"], tx["channel"], tx["description"])
-            )
+            _is_sqlite = "sqlite" in str(_sa_engine.url)
+            params = {
+                "transaction_id": tx["transaction_id"],
+                "customer_id": tx["customer_id"],
+                "amount": tx["amount"],
+                "status": tx["status"],
+                "date": tx["date"],
+                "channel": tx["channel"],
+                "description": tx["description"],
+            }
+            if _is_sqlite:
+                conn.execute(sa_text("""
+                    INSERT OR REPLACE INTO transactions (
+                        transaction_id, customer_id, amount, status, date, channel, description
+                    ) VALUES (:transaction_id,:customer_id,:amount,:status,:date,:channel,:description)
+                """), params)
+            else:
+                conn.execute(sa_text("""
+                    INSERT INTO transactions (
+                        transaction_id, customer_id, amount, status, date, channel, description
+                    ) VALUES (:transaction_id,:customer_id,:amount,:status,:date,:channel,:description)
+                    ON CONFLICT (transaction_id) DO UPDATE SET
+                        customer_id=EXCLUDED.customer_id, amount=EXCLUDED.amount,
+                        status=EXCLUDED.status, date=EXCLUDED.date,
+                        channel=EXCLUDED.channel, description=EXCLUDED.description
+                """), params)
             conn.commit()
 
     def clear(self):
         with self._connect() as conn:
-            conn.execute("DELETE FROM complaints")
-            conn.execute("DELETE FROM transactions")
+            conn.execute(sa_text("DELETE FROM complaints"))
+            conn.execute(sa_text("DELETE FROM transactions"))
             conn.commit()
 
 
