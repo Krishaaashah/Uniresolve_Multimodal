@@ -498,6 +498,7 @@ async def get_duplicates(ticket_id: str, current_user: dict = Depends(get_curren
 
 @router.get("/{ticket_id}/timeline")
 async def get_complaint_timeline(ticket_id: str, current_user: dict = Depends(get_current_user)):
+    from sqlalchemy import text as sa_text
     store = get_store()
     with store._connect() as conn:
         row = conn.execute(
@@ -508,15 +509,6 @@ async def get_complaint_timeline(ticket_id: str, current_user: dict = Depends(ge
         raise HTTPException(status_code=404, detail="Complaint not found")
         
     c = store._row_to_complaint(row)
-    if c.parent_ticket_id:
-        with store._connect() as conn:
-            parent_row = conn.execute(
-                sa_text("SELECT * FROM complaints WHERE ticket_id = :parent_id OR id = :parent_id"),
-                {"parent_id": c.parent_ticket_id}
-            ).fetchone()
-        if parent_row:
-            c = store._row_to_complaint(parent_row)
-
     complaint_id = c.id
     
     audit_logs = store.get_audit_logs(complaint_id=complaint_id)
