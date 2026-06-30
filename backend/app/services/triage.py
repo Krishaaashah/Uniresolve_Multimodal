@@ -63,7 +63,7 @@ RESPONSE_TEMPLATES = {
 }
 
 
-def _rule_based_triage(text: str, skip_ai_draft: bool = False) -> TriageResult:
+def _rule_based_triage(text: str, skip_ai_draft: bool = False, transaction_note: Optional[str] = None) -> TriageResult:
     """Deterministic fallback when the ML model is not loaded."""
     lower = text.lower()
 
@@ -99,7 +99,9 @@ def _rule_based_triage(text: str, skip_ai_draft: bool = False) -> TriageResult:
     if skip_ai_draft:
         suggested_response = fallback_response
     else:
-        suggested_response = generate_draft_response(text, category, sentiment, severity, fallback_response, "English")
+        suggested_response = generate_draft_response(
+            text, category, sentiment, severity, fallback_response, "English", transaction_note=transaction_note
+        )
 
     return TriageResult(
         category=category,
@@ -113,7 +115,15 @@ def _rule_based_triage(text: str, skip_ai_draft: bool = False) -> TriageResult:
     )
 
 
-def generate_draft_response(complaint_text: str, category, sentiment, severity, fallback: str = "", detected_language: str = "English") -> str:
+def generate_draft_response(
+    complaint_text: str,
+    category,
+    sentiment,
+    severity,
+    fallback: str = "",
+    detected_language: str = "English",
+    transaction_note: Optional[str] = None
+) -> str:
     if GEMINI_API_KEY:
         try:
             import httpx
@@ -126,8 +136,10 @@ def generate_draft_response(complaint_text: str, category, sentiment, severity, 
                         f"Complaint: {complaint_text}\n"
                         f"Category: {getattr(category, 'value', category)}\n"
                         f"Sentiment: {getattr(sentiment, 'value', sentiment)}\n"
-                        f"Severity: {getattr(severity, 'value', severity)}\n\n"
-                        f"Write a professional customer service response for a financial institution. "
+                        f"Severity: {getattr(severity, 'value', severity)}\n"
+                        + (f"Transaction Status Context: {transaction_note}\n" if transaction_note else "") +
+                        f"\nWrite a professional customer service response for a financial institution. "
+                        + (f"Incorporate the transaction status context in the response if applicable. " if transaction_note else "") +
                         f"The customer's language is {detected_language}. Write the response in {detected_language}. "
                         f"Write empathetically and concisely. Do not make up policy details. Max 3 sentences."
                     )}]
@@ -167,7 +179,8 @@ def generate_draft_response(complaint_text: str, category, sentiment, severity, 
                             f"Complaint: {complaint_text}\n"
                             f"Category: {getattr(category, 'value', category)}\n"
                             f"Sentiment: {getattr(sentiment, 'value', sentiment)}\n"
-                            f"Severity: {getattr(severity, 'value', severity)}"
+                            f"Severity: {getattr(severity, 'value', severity)}\n"
+                            + (f"Transaction Status Context: {transaction_note}\n" if transaction_note else "")
                         ),
                     }
                 ],
@@ -191,10 +204,10 @@ class TriageService:
         self._model_ready = True
 
 
-    def triage(self, masked_text: str, skip_ai_draft: bool = False) -> TriageResult:
+    def triage(self, masked_text: str, skip_ai_draft: bool = False, transaction_note: Optional[str] = None) -> TriageResult:
         # Do NOT run LLM for seed/replay items or if no API keys are set
         if skip_ai_draft or not (GEMINI_API_KEY or ANTHROPIC_API_KEY):
-            return _rule_based_triage(masked_text, skip_ai_draft=skip_ai_draft)
+            return _rule_based_triage(masked_text, skip_ai_draft=skip_ai_draft, transaction_note=transaction_note)
 
         try:
             system_prompt = (
@@ -261,7 +274,7 @@ class TriageService:
                 ref_id=str(uuid.uuid4())[:8].upper()
             )
             suggested_response = generate_draft_response(
-                masked_text, category, sentiment, severity, fallback_response, detected_language
+                masked_text, category, sentiment, severity, fallback_response, detected_language, transaction_note=transaction_note
             )
 
             return TriageResult(
@@ -276,7 +289,7 @@ class TriageService:
             )
         except Exception as e:
             logger.error(f"LLM triage failed: {e}. Falling back to rules.")
-            return _rule_based_triage(masked_text, skip_ai_draft=skip_ai_draft)
+            return _rule_based_triage(masked_text, skip_ai_draft=skip_ai_draft, transaction_note=transaction_note)
 
 
 

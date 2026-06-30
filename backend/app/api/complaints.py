@@ -107,13 +107,34 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
             payload.raw_text = media_desc
 
     masked_text, masked_fields = mask_pii(payload.raw_text)
-    
+
+    # Check transaction status on ingestion
+    tx_note = None
+    if payload.transaction_id:
+        tx = store.get_transaction(payload.transaction_id)
+        if tx:
+            tx_status = tx.get("status")
+            tx_date = tx.get("created_at") or "unknown date"
+            tx_amount = tx.get("amount") or "0"
+            if tx_status == "completed":
+                tx_note = f"Transaction {payload.transaction_id} was successfully completed on {tx_date}."
+            elif tx_status == "refunded":
+                tx_note = f"Refund of Rs {tx_amount} was processed on {tx_date} for transaction {payload.transaction_id}."
+            elif tx_status == "failed":
+                tx_note = f"Transaction {payload.transaction_id} of Rs {tx_amount} failed on {tx_date}."
+            elif tx_status == "pending":
+                tx_note = f"Transaction {payload.transaction_id} of Rs {tx_amount} is currently pending as of {tx_date}."
+
+            if tx_note:
+                payload.raw_text = f"{payload.raw_text}\n\n[Transaction Status Context]: {tx_note}"
+                masked_text = f"{masked_text}\n\n[Transaction Status Context]: {tx_note}"
+
     # Conserve rate limits for background loops/seeding
     is_seed = payload.channel_metadata.get("seed") is True
     is_replay = payload.source_ref and payload.source_ref.startswith("replay-")
     skip_ai_draft = is_seed or is_replay
-    
-    triage_result = get_triage_service().triage(masked_text, skip_ai_draft=skip_ai_draft)
+
+    triage_result = get_triage_service().triage(masked_text, skip_ai_draft=skip_ai_draft, transaction_note=tx_note)
     received_at = payload.received_at or datetime.utcnow()
     
     complaint = Complaint(
