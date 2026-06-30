@@ -874,7 +874,12 @@ function complaintCard(c){
       <span class="with-icon" style="font-size:12px;color:var(--muted)">${icon('folder','sm')} ${t.category||'General'}</span>
       <div style="display:flex;gap:7px">
         ${c.cluster?.systemic_alert?`<span class="badge-sys pulse with-icon">${icon('alert','sm')} SYSTEMIC</span>`:''}
-        ${c.cluster?.cluster_size>1?`<span class="badge-cluster with-icon">${icon('link','sm')} ${c.cluster.cluster_size} linked</span>`:''}
+        ${(c.cluster?.is_duplicate && c.cluster?.duplicate_reason === 'exact_id')
+          ? `<span class="badge-sys with-icon" style="background:#e53e3e;color:#fff">${icon('alert','sm')} Duplicate — same customer & transaction</span>`
+          : (c.cluster?.is_duplicate)
+            ? `<span class="badge-cluster with-icon">${icon('link','sm')} Related — similar issue</span>`
+            : (c.cluster?.cluster_size>1)?`<span class="badge-cluster with-icon">${icon('link','sm')} ${c.cluster.cluster_size} linked</span>`:''
+        }
         ${breach?`<span class="badge-breach with-icon">${icon('clock','sm')} SLA BREACH</span>`:''}
       </div>
     </div>
@@ -1437,7 +1442,15 @@ function renderOverview(c){
       <div class="iblk"><label>Severity</label><p><span class="pill ${t.severity||'medium'}">${t.severity||'-'}</span></p></div>
       <div class="iblk"><label>Sentiment</label><p><span class="pill ${t.sentiment||'neutral'}">${t.sentiment||'-'}</span></p></div>
       <div class="iblk"><label>Received</label><p>${fmtDt(c.received_at)}</p></div>
-      <div class="iblk"><label>Cluster</label><p>${c.cluster?.cluster_size>1?`<span class="with-icon">${icon('link','sm')} ${c.cluster.cluster_size} related</span>`:'Unique'}</p></div>
+      <div class="iblk"><label>Cluster</label><p>${
+        (c.cluster?.is_duplicate && c.cluster?.duplicate_reason === 'exact_id')
+          ? `<span style="color:#e53e3e;font-weight:700">${icon('alert','sm')} Duplicate — same customer & transaction</span>`
+          : (c.cluster?.is_duplicate)
+            ? `<span style="color:#3182ce;font-weight:700">${icon('link','sm')} Related — similar issue (${c.cluster.cluster_size} linked)</span>`
+            : (c.cluster?.cluster_size > 1)
+              ? `<span style="color:#3182ce;font-weight:700">${icon('link','sm')} Parent of ${c.cluster.cluster_size} related</span>`
+              : 'Unique'
+      }</p></div>
       <div class="iblk"><label>Customer ID</label><p>${c.customer_id||'Anonymous'}</p></div>
       <div class="iblk"><label>Language</label><p>${t.detected_language||'English'}</p></div>
       <div class="iblk"><label>RBI Clock Status</label><p><span class="pill rbi-${c.rbi_status}">${c.rbi_status}</span></p></div>

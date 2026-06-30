@@ -84,10 +84,12 @@ class ComplaintStore:
                     sla_breached INTEGER DEFAULT 0,
                     duplicate_of TEXT,
                     cluster_id TEXT,
+                    duplicate_reason TEXT,
                     created_at TEXT,
                     updated_at TEXT,
                     resolved_at TEXT,
                     customer_id TEXT,
+                    transaction_id TEXT,
                     source_ref TEXT,
                     received_at TEXT,
                     confidence REAL,
@@ -103,6 +105,14 @@ class ComplaintStore:
                 """
             )
             # Safe table alterations in case database already existed
+            try:
+                conn.execute("ALTER TABLE complaints ADD COLUMN transaction_id TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE complaints ADD COLUMN duplicate_reason TEXT")
+            except sqlite3.OperationalError:
+                pass
             try:
                 conn.execute("ALTER TABLE complaints ADD COLUMN detected_language TEXT DEFAULT 'English'")
             except sqlite3.OperationalError:
@@ -198,16 +208,27 @@ class ComplaintStore:
             confidence=float(row["confidence"] or 0.75),
             detected_language=detected_lang
         )
+        try:
+            dup_reason = row["duplicate_reason"]
+        except Exception:
+            dup_reason = None
+
         cluster = DuplicateCluster(
             cluster_id=row["cluster_id"] or "",
             is_duplicate=bool(row["duplicate_of"]),
             duplicate_of=row["duplicate_of"],
             cluster_size=int(row["cluster_size"] or 1),
             systemic_alert=bool(row["systemic_alert"]),
+            duplicate_reason=dup_reason,
         )
         history = [HistoryMessage.model_validate(item) for item in _loads(row["communication_history"], [])]
         escalations = [EscalationRecord.model_validate(item) for item in _loads(row["escalation_history"], [])]
         sla_status = sla.status if sla else (SLAStatus.BREACHED if row["sla_breached"] else SLAStatus.ON_TRACK)
+        try:
+            tx_id = row["transaction_id"]
+        except Exception:
+            tx_id = None
+
         return Complaint(
             id=row["id"],
             channel=Channel(row["channel"]),
@@ -216,6 +237,7 @@ class ComplaintStore:
             masked_text=row["masked_text"] or "",
             masked_fields=_loads(row["masked_fields"], []),
             customer_id=row["customer_id"],
+            transaction_id=tx_id,
             source_ref=row["source_ref"],
             received_at=received_at,
             triage=triage,
@@ -256,11 +278,11 @@ class ComplaintStore:
                     id, channel, channel_metadata, complaint_text, masked_text, masked_fields,
                     category, severity, sentiment, key_issues, draft_response, status,
                     assigned_agent, sla_deadline, sla_breached, duplicate_of, cluster_id,
-                    created_at, updated_at, resolved_at, customer_id, source_ref, received_at,
+                    duplicate_reason, created_at, updated_at, resolved_at, customer_id, transaction_id, source_ref, received_at,
                     confidence, cluster_size, systemic_alert, escalation_level,
                     escalation_history, communication_history, agent_note,
                     detected_language, tenant_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     complaint.id,
@@ -280,10 +302,12 @@ class ComplaintStore:
                     int(complaint.sla_breached),
                     complaint.cluster.duplicate_of if complaint.cluster else None,
                     complaint.cluster.cluster_id if complaint.cluster else None,
+                    complaint.cluster.duplicate_reason if complaint.cluster else None,
                     complaint.created_at.isoformat(),
                     complaint.updated_at.isoformat(),
                     complaint.resolved_at.isoformat() if complaint.resolved_at else None,
                     complaint.customer_id,
+                    complaint.transaction_id,
                     complaint.source_ref,
                     complaint.received_at.isoformat(),
                     complaint.triage.confidence if complaint.triage else 0.75,

@@ -121,6 +121,7 @@ class DuplicateCluster(BaseModel):
     duplicate_of: Optional[str] = None
     cluster_size: int = 1
     systemic_alert: bool = False
+    duplicate_reason: Optional[str] = None
 
 
 class SLAInfo(BaseModel):

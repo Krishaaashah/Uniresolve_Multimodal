@@ -79,50 +79,100 @@ class ClusteringService:
         vec = self.encoder.encode([text], normalize_embeddings=True)
         return vec.astype("float32")
 
-    def check_and_register(self, complaint_id: str, text: str) -> DuplicateCluster:
+    def check_and_register(self, complaint_id: str, text: str, customer_id: Optional[str] = None, transaction_id: Optional[str] = None) -> DuplicateCluster:
         """
         Check if `text` is semantically similar to any existing complaint.
+        Or check if exact ID duplicate (customer_id, transaction_id) exists,
+        or if same customer has a complaint in the same semantic cluster within 7 days.
         Register the embedding regardless.
         Returns a DuplicateCluster describing the relationship.
         """
+        from datetime import datetime, timedelta
+        from app.services.store import get_store
+        store = get_store()
+
         with self.lock:
-            if self.index is None or not self.healthy:
-                # No model — every complaint is its own cluster
+            is_exact_id_duplicate = False
+            exact_duplicate_of = None
+            cluster_id = None
 
-                new_cluster_id = str(uuid.uuid4())
-                self.cluster_map[complaint_id] = new_cluster_id
-                self.cluster_counts[new_cluster_id] = 1
-                return DuplicateCluster(
-                    cluster_id=new_cluster_id,
-                    is_duplicate=False,
-                    cluster_size=1,
-                    systemic_alert=False,
-                )
+            # 1. Check same customer and same transaction
+            if customer_id and transaction_id:
+                try:
+                    all_complaints = store.all()
+                    for c in all_complaints:
+                        if c.customer_id == customer_id and c.transaction_id == transaction_id and c.id != complaint_id:
+                            is_exact_id_duplicate = True
+                            exact_duplicate_of = c.id
+                            cluster_id = c.cluster.cluster_id if c.cluster else None
+                            break
+                except Exception as e:
+                    logger.warning(f"Error checking exact transaction ID duplicate: {e}")
 
-            vec = self._encode(text)
+            # 2. Check same customer and same semantic cluster in the last 7 days
+            if not is_exact_id_duplicate and customer_id and self.index is not None and self.healthy and len(self.id_map) > 0:
+                vec = self._encode(text)
+                if vec is not None:
+                    distances, indices = self.index.search(vec, k=min(5, len(self.id_map)))
+                    best_score = float(distances[0][0])
+                    best_idx = int(indices[0][0])
+                    if best_score >= SIMILARITY_THRESHOLD:
+                        potential_cluster_id = self.cluster_map.get(self.id_map[best_idx])
+                        try:
+                            all_complaints = store.all()
+                            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+                            for c in all_complaints:
+                                if (c.customer_id == customer_id and 
+                                    c.cluster and c.cluster.cluster_id == potential_cluster_id and 
+                                    c.received_at >= seven_days_ago and 
+                                    c.id != complaint_id):
+                                    is_exact_id_duplicate = True
+                                    exact_duplicate_of = c.id
+                                    cluster_id = potential_cluster_id
+                                    break
+                        except Exception as e:
+                            logger.warning(f"Error checking recent semantic duplicate for customer: {e}")
+
+            # 3. Fallback to standard FAISS check if not exact ID duplicate
             is_duplicate = False
             matched_complaint_id = None
-            cluster_id = str(uuid.uuid4())
+            duplicate_reason = None
 
-            if len(self.id_map) > 0:
-                # Search for nearest neighbour
-                distances, indices = self.index.search(vec, k=min(5, len(self.id_map)))
-                best_score = float(distances[0][0])
-                best_idx = int(indices[0][0])
+            if is_exact_id_duplicate:
+                is_duplicate = True
+                matched_complaint_id = exact_duplicate_of
+                duplicate_reason = "exact_id"
+                if not cluster_id:
+                    cluster_id = str(uuid.uuid4())
+            else:
+                # Normal semantic check
+                if self.index is not None and self.healthy and len(self.id_map) > 0:
+                    vec = self._encode(text)
+                    if vec is not None:
+                        distances, indices = self.index.search(vec, k=min(5, len(self.id_map)))
+                        best_score = float(distances[0][0])
+                        best_idx = int(indices[0][0])
+                        if best_score >= SIMILARITY_THRESHOLD:
+                            is_duplicate = True
+                            matched_complaint_id = self.id_map[best_idx]
+                            duplicate_reason = "semantic"
+                            cluster_id = self.cluster_map.get(matched_complaint_id, str(uuid.uuid4()))
 
-                if best_score >= SIMILARITY_THRESHOLD:
-                    is_duplicate = True
-                    matched_complaint_id = self.id_map[best_idx]
-                    # Inherit cluster from the matched complaint
-                    cluster_id = self.cluster_map.get(matched_complaint_id, str(uuid.uuid4()))
+                if not cluster_id:
+                    cluster_id = str(uuid.uuid4())
 
-            # Register
-            self.index.add(vec)
-            self.id_map.append(complaint_id)
-            self.cluster_map[complaint_id] = cluster_id
-            self.cluster_counts[cluster_id] = self.cluster_counts.get(cluster_id, 0) + 1
-            if self.index is not None:
-                self._save_index()
+            # Register embedding in FAISS index (if healthy)
+            if self.index is not None and self.healthy:
+                vec = self._encode(text)
+                if vec is not None:
+                    self.index.add(vec)
+                    self.id_map.append(complaint_id)
+                    self.cluster_map[complaint_id] = cluster_id
+                    self.cluster_counts[cluster_id] = self.cluster_counts.get(cluster_id, 0) + 1
+                    self._save_index()
+            else:
+                self.cluster_map[complaint_id] = cluster_id
+                self.cluster_counts[cluster_id] = self.cluster_counts.get(cluster_id, 0) + 1
 
             cluster_size = self.cluster_counts[cluster_id]
             systemic_alert = cluster_size >= CLUSTER_ALERT_THRESHOLD
@@ -136,6 +186,7 @@ class ClusteringService:
                 duplicate_of=matched_complaint_id,
                 cluster_size=cluster_size,
                 systemic_alert=systemic_alert,
+                duplicate_reason=duplicate_reason,
             )
     def get_cluster_complaints(self, cluster_id: str) -> list[str]:
         """Return all complaint IDs in a given cluster."""

@@ -152,7 +152,12 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
             HistoryMessage(author=MessageAuthor.AGENT, author_name="AI Assistant", content=triage_result.suggested_response, is_ai_draft=True),
         ]
     )
-    complaint.cluster = get_clustering_service().check_and_register(complaint.id, masked_text)
+    complaint.cluster = get_clustering_service().check_and_register(
+        complaint.id,
+        masked_text,
+        customer_id=complaint.customer_id,
+        transaction_id=complaint.transaction_id
+    )
     store.save(complaint)
     store.log_audit("system", "system", "ingest", complaint.id)
     return ComplaintResponse(complaint=complaint, message="Complaint ingested and triaged successfully.")
