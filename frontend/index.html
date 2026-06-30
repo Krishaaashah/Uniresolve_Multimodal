@@ -507,8 +507,8 @@ main{flex:1;overflow-y:auto;padding:22px}
 
 <script>
 // ────────────────────────────────────────────────────────────────────────────
-const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-  ? 'http://localhost:8000' 
+const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://127.0.0.1:8000'
   : window.location.origin;
 const localKey = localStorage.getItem('UNIRESOLVE_API_KEY');
 const API_KEY = (!localKey || localKey === 'undefined' || localKey === 'null' || localKey.trim() === '') ? 'dev-secret-key' : localKey;
@@ -686,10 +686,11 @@ async function checkModelReady() {
     }
     
     // Toggle demo controls based on readiness
-    const ready = h.model_ready && h.encoder_ready && h.llm_reachable;
+    const ready = !!h.ready;
     const btn = document.getElementById('liveModeBtn');
     const igBtn = document.getElementById('igBtn');
     const banner = document.getElementById('modelWarmBanner');
+
     
     if (!ready) {
       if (btn) {
@@ -2155,36 +2156,53 @@ document.addEventListener('keydown', async e => {
   }
 });
 
+// Role credentials map — no passwords in the UI
+const ROLE_CREDS = {
+  agent:      {username:'agent',      password:'agent123'},
+  supervisor: {username:'supervisor', password:'supervisor123'},
+  admin:      {username:'admin',      password:'admin123'},
+};
+
 function showLoginOverlay() {
   let overlay = document.getElementById('loginOverlay');
   if (!overlay) {
     overlay = document.createElement('div');
     overlay.id = 'loginOverlay';
-    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(26,32,44,0.9);display:flex;justify-content:center;align-items:center;z-index:9999;font-family:inherit;';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,15,40,0.93);display:flex;justify-content:center;align-items:center;z-index:9999;font-family:inherit;backdrop-filter:blur(4px);';
     overlay.innerHTML = `
-      <div style="background:#fff;border-radius:12px;width:90%;max-width:400px;padding:32px;box-shadow:0 10px 25px rgba(0,0,0,0.2)">
-        <div style="text-align:center;margin-bottom:24px">
-          <div style="font-size:28px;font-weight:700;color:#2b6cb0;margin-bottom:8px">UniResolve</div>
-          <p style="color:#718096;font-size:14px">Hackathon Unified Customer Complaint Portal</p>
+      <div style="background:#fff;border-radius:16px;width:90%;max-width:420px;padding:40px 36px;box-shadow:0 20px 60px rgba(0,0,0,0.4);text-align:center;">
+        <div style="font-size:13px;font-weight:700;letter-spacing:2px;color:#cc0000;text-transform:uppercase;margin-bottom:6px;">Union Bank · IDEA 2.0</div>
+        <div style="font-size:30px;font-weight:900;color:#003087;margin-bottom:4px;">UniResolve</div>
+        <p style="color:#718096;font-size:13px;margin-bottom:32px;">Unified Complaint Communication Dashboard</p>
+
+        <div style="font-size:12px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:.8px;margin-bottom:14px;">Select your role to continue</div>
+
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <button onclick="handleRoleLogin('agent')" style="padding:14px;border-radius:10px;border:2px solid #e2e8f0;background:#f7fafc;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:12px;transition:all 0.18s;" onmouseover="this.style.background='#ebf4ff';this.style.borderColor='#003087'" onmouseout="this.style.background='#f7fafc';this.style.borderColor='#e2e8f0'">
+            <span style="font-size:22px;">🧑‍💼</span>
+            <div style="text-align:left;">
+              <div style="color:#003087;">Agent</div>
+              <div style="font-size:11px;font-weight:400;color:#718096;">Handle & resolve complaints</div>
+            </div>
+          </button>
+          <button onclick="handleRoleLogin('supervisor')" style="padding:14px;border-radius:10px;border:2px solid #e2e8f0;background:#f7fafc;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:12px;transition:all 0.18s;" onmouseover="this.style.background='#fff5eb';this.style.borderColor='#dd6b20'" onmouseout="this.style.background='#f7fafc';this.style.borderColor='#e2e8f0'">
+            <span style="font-size:22px;">👨‍💻</span>
+            <div style="text-align:left;">
+              <div style="color:#dd6b20;">Supervisor</div>
+              <div style="font-size:11px;font-weight:400;color:#718096;">Escalations & team oversight</div>
+            </div>
+          </button>
+          <button onclick="handleRoleLogin('admin')" style="padding:14px;border-radius:10px;border:2px solid #e2e8f0;background:#f7fafc;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:12px;transition:all 0.18s;" onmouseover="this.style.background='#fff5f5';this.style.borderColor='#cc0000'" onmouseout="this.style.background='#f7fafc';this.style.borderColor='#e2e8f0'">
+            <span style="font-size:22px;">🛡️</span>
+            <div style="text-align:left;">
+              <div style="color:#cc0000;">Admin</div>
+              <div style="font-size:11px;font-weight:400;color:#718096;">Full access · audit · reports</div>
+            </div>
+          </button>
         </div>
-        <div id="loginError" style="color:#e53e3e;font-size:13px;margin-bottom:12px;display:none;font-weight:600"></div>
-        <form onsubmit="handleLogin(event)">
-          <div style="margin-bottom:16px">
-            <label style="display:block;font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px">Username</label>
-            <input type="text" id="loginUsername" required style="width:100%;padding:10px 12px;border:1px solid #cbd5e0;border-radius:6px;font-size:14px" placeholder="agent / supervisor / admin">
-          </div>
-          <div style="margin-bottom:24px">
-            <label style="display:block;font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px">Password</label>
-            <input type="password" id="loginPassword" required style="width:100%;padding:10px 12px;border:1px solid #cbd5e0;border-radius:6px;font-size:14px" placeholder="agent123 / supervisor123 / admin123">
-          </div>
-          <button type="submit" style="width:100%;padding:12px;background:#2b6cb0;color:#fff;border:none;border-radius:6px;font-weight:700;font-size:15px;cursor:pointer;transition:background 0.2s">Login</button>
-        </form>
-        <div style="margin-top:20px;font-size:12px;color:#718096;text-align:center;line-height:1.6">
-          <strong>Pre-seeded Credentials:</strong><br>
-          Agent: <code>agent</code> / <code>agent123</code><br>
-          Supervisor: <code>supervisor</code> / <code>supervisor123</code><br>
-          Admin: <code>admin</code> / <code>admin123</code>
-        </div>
+
+        <div id="loginError" style="color:#e53e3e;font-size:13px;margin-top:16px;display:none;font-weight:600;"></div>
+        <div id="loginSpinner" style="margin-top:16px;color:#718096;font-size:13px;display:none;">Authenticating…</div>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -2193,41 +2211,38 @@ function showLoginOverlay() {
   }
 }
 
-async function handleLogin(e) {
-  e.preventDefault();
-  const u = document.getElementById('loginUsername').value;
-  const p = document.getElementById('loginPassword').value;
+async function handleRoleLogin(role) {
+  const creds = ROLE_CREDS[role];
+  if (!creds) return;
   const errEl = document.getElementById('loginError');
+  const spinner = document.getElementById('loginSpinner');
   errEl.style.display = 'none';
+  spinner.style.display = 'block';
   try {
     const res = await fetch(API + '/complaints/auth/login', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({username: u, password: p})
+      body: JSON.stringify(creds)
     });
-    if (!res.ok) {
-      throw new Error('Invalid credentials');
-    }
+    if (!res.ok) throw new Error('Auth failed');
     const data = await res.json();
     localStorage.setItem('auth_token', data.access_token);
     localStorage.setItem('auth_role', data.role);
     localStorage.setItem('auth_username', data.username);
-    
-    // Hide login overlay
     document.getElementById('loginOverlay').style.display = 'none';
-    
-    // Update logged-in agent display
     document.getElementById('currentUserDisplay').textContent = `${data.username} (${data.role.toUpperCase()})`;
-    
-    // Reload dashboard
     await loadAll();
     render();
-    showToast('Logged in successfully.', 'success');
+    showToast(`Logged in as ${data.role.toUpperCase()}.`, 'success');
   } catch(err) {
-    errEl.textContent = 'Invalid username or password.';
+    spinner.style.display = 'none';
+    errEl.textContent = 'Login failed — backend may be unreachable.';
     errEl.style.display = 'block';
   }
 }
+
+// Keep handleLogin for backward-compat (unused but safe)
+async function handleLogin(e) { if(e) e.preventDefault(); }
 
 function logoutUser() {
   localStorage.removeItem('auth_token');

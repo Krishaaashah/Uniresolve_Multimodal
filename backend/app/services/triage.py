@@ -1,7 +1,7 @@
 """
 NLP Triage Service
-- Uses FLAN-T5-Base for category, severity, sentiment, key issue extraction
-- Falls back to rule-based classification when model is unavailable
+- LLM-based classification (Gemini primary, Anthropic fallback) with a deterministic
+  keyword fallback when no API key is configured.
 - Returns TriageResult with a suggested response draft
 """
 

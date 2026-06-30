@@ -362,6 +362,21 @@ async def list_complaints(
     return complaints[:limit]
 
 
+@router.get("/audit", tags=["audit"])
+async def get_audit(
+    complaint_id: Optional[str] = Query(None),
+    current_user: dict = Depends(require_role(["admin"]))
+):
+    store = get_store()
+    return store.get_audit_logs(complaint_id=complaint_id)
+
+
+@router.get("/{complaint_id}/audit", tags=["audit"])
+async def get_complaint_audit(complaint_id: str, current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    return store.get_audit_logs(complaint_id=complaint_id)
+
+
 @router.get("/{complaint_id}", response_model=Complaint)
 async def get_complaint(complaint_id: str):
     c = get_store().get(complaint_id)
@@ -462,18 +477,4 @@ async def link_customer(complaint_id: str, payload: dict, current_user: dict = D
     store.log_audit(current_user["username"], current_user["role"], f"link customer: {c.customer_id}", complaint_id)
     return {"success": True, "complaint": c}
 
-
-@router.get("/audit", tags=["audit"])
-async def get_audit(
-    complaint_id: Optional[str] = Query(None),
-    current_user: dict = Depends(require_role(["admin"]))
-):
-    store = get_store()
-    return store.get_audit_logs(complaint_id=complaint_id)
-
-
-@router.get("/{complaint_id}/audit", tags=["audit"])
-async def get_complaint_audit(complaint_id: str, current_user: dict = Depends(get_current_user)):
-    store = get_store()
-    return store.get_audit_logs(complaint_id=complaint_id)
 

@@ -6,6 +6,7 @@ from app.config import GEMINI_API_KEY, ANTHROPIC_API_KEY, GEMINI_MODEL, CLAUDE_M
 logger = logging.getLogger(__name__)
 
 def _claude_json(system: str, user: str, fallback: dict) -> dict:
+    errors = []
     if GEMINI_API_KEY:
         try:
             import httpx
@@ -27,8 +28,11 @@ def _claude_json(system: str, user: str, fallback: dict) -> dict:
                 start = text.find("{")
                 end = text.rfind("}") + 1
                 return json.loads(text[start:end])
+            else:
+                raise RuntimeError(f"Gemini API returned status {res.status_code}: {res.text}")
         except Exception as e:
             logger.warning(f"Gemini JSON generation failed: {e}")
+            errors.append(e)
 
     if ANTHROPIC_API_KEY:
         try:
@@ -46,7 +50,10 @@ def _claude_json(system: str, user: str, fallback: dict) -> dict:
             return json.loads(text[start:end])
         except Exception as e:
             logger.warning(f"Claude JSON generation failed: {e}")
+            errors.append(e)
 
+    if errors:
+        raise RuntimeError(f"All LLM requests failed: {errors}")
     return fallback
 
 

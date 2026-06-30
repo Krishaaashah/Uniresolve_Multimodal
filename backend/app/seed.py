@@ -59,10 +59,8 @@ def build_complaint(raw, channel, category, severity, status, days_ago, sentimen
                 
     detected_lang = "English"
     if any(ord(c) >= 0x0900 and ord(c) <= 0x097F for c in raw):
-        if "माझ्या" in raw or "आहे" in raw or "वजा" in raw:
-            detected_lang = "Marathi"
-        else:
-            detected_lang = "Hindi"
+        detected_lang = "Hindi"
+
 
     complaint = Complaint(
         id=complaint_id,
@@ -79,7 +77,7 @@ def build_complaint(raw, channel, category, severity, status, days_ago, sentimen
             sentiment=sentiment,
             key_issue=key_issue,
             key_issues=[key_issue],
-            suggested_response="Dear Customer, we have registered your complaint and our team is reviewing it on priority. We will update you within the applicable SLA.",
+            suggested_response="प्रिय ग्राहक, हमने आपकी शिकायत दर्ज कर ली है और हमारी टीम इस पर प्राथमिकता से विचार कर रही है। हम आपको लागू SLA के भीतर अपडेट करेंगे।" if detected_lang == "Hindi" else "Dear Customer, we have registered your complaint and our team is reviewing it on priority. We will update you within the applicable SLA.",
             confidence=0.88,
             detected_language=detected_lang,
         ),
@@ -113,12 +111,9 @@ def main():
     store.clear()
     dup_cluster = str(uuid4())
     rows = [
-        # Hindi & Marathi vernacular complaints
+        # Hindi vernacular complaints
         ("मेरा यूपीआई ट्रांसफर फेल हो गया है लेकिन मेरे बैंक खाते से 5000 रुपये कट गए हैं। कृपया वापस करें।", Channel.APP, Category.UPI, Severity.CRITICAL, ComplaintStatus.PENDING, 0, Sentiment.ANGRY, None, None, "CUST-HIN1", None, None, "UBI Subsidiary"),
 
-        ("माझ्या खात्यातून गृहकर्जाचे ईएमआय दोनदा वजा झाले आहे. कृपया त्वरित पैसे परत करा.", Channel.EMAIL, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING, 1, Sentiment.ANGRY, None, None, "CUST-MAR1", None, None, "UBI Subsidiary"),
-
-        
         # PII-heavy complaints
         ("Dear Union Bank, this is Aarav Sharma. Fraud transaction on my Debit Card 4532-7102-8394-1025. Please block it immediately. My Aadhaar is 8293-1029-4820 and Mobile is +91-9820192837. Account number 9102837465.", Channel.WEB, Category.CREDIT_CARD, Severity.CRITICAL, ComplaintStatus.PENDING, 2, Sentiment.ANGRY, None, None, "CUST-30482", None, None),
         

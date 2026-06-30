@@ -97,12 +97,15 @@ async def health():
         except Exception:
             llm_reachable = False
             
+    ready = bool(encoder_ready and llm_reachable)
     return {
         "status": "healthy",
         "model_ready": get_triage_service()._model_ready,
         "encoder_ready": encoder_ready,
         "dedup_healthy": dedup_healthy,
-        "llm_reachable": llm_reachable
+        "llm_reachable": llm_reachable,
+        "clustering_healthy": dedup_healthy,
+        "ready": ready
     }
 
 

@@ -22,13 +22,9 @@ This script documents the exact click path and validation steps to demonstrate U
 3. Open the detail view. Note:
    - The detected language is recognized as **Hindi** under the Overview.
    - Check the **History** tab: the suggested draft reply from the LLM is written in **Hindi** to correspond to the customer's language.
-4. Select the complaint with the **Marathi** badge:
-   > *"माझ्या खात्यातून गृहकर्जाचे ईएमआय दोनदा..."*
-5. Open the detail view. Verify:
-   - Under the Overview, the detected language is shown as **Marathi**.
-   - Check the **History** tab: the suggested draft reply from the LLM is written in **Marathi**.
 
 ---
+
 
 ## Step 3: Hybrid PII Scrubbing & Security Audit
 1. Open the dense PII card:

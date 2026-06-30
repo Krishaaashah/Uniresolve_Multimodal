@@ -13,3 +13,6 @@ node_modules/
 .DS_Store
 *.faiss
 /models/
+
+frontend/assets/uploads/
+backend/frontend/

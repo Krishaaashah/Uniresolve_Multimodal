@@ -9,7 +9,11 @@ if not API_KEY:
 
 ALLOWED_ORIGINS = [
     origin.strip()
-    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5000,http://localhost:8000").split(",")
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://localhost:5000,http://localhost:8000,"
+        "http://127.0.0.1:3000,http://127.0.0.1:5000,http://127.0.0.1:8000"
+    ).split(",")
     if origin.strip()
 ]
 

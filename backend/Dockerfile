@@ -10,7 +10,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download models at build time so runtime is fast
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" || true
-RUN python -c "from transformers import T5Tokenizer, T5ForConditionalGeneration; T5Tokenizer.from_pretrained('google/flan-t5-base'); T5ForConditionalGeneration.from_pretrained('google/flan-t5-base')" || true
+RUN python -m spacy download en_core_web_sm
+
 
 COPY . .
 
