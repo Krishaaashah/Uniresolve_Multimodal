@@ -491,6 +491,14 @@ main{flex:1;overflow-y:auto;padding:22px}
         </select>
       </div>
       <div class="fg">
+        <label>Customer ID (Required)</label>
+        <input type="text" id="igCustId" placeholder="e.g. CUST-10245" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:13.5px;outline:none;background:#f7fafc">
+      </div>
+      <div class="fg">
+        <label>Transaction ID (Optional)</label>
+        <input type="text" id="igTxId" placeholder="e.g. TXN-HIN1-F1" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:13.5px;outline:none;background:#f7fafc">
+      </div>
+      <div class="fg">
         <label>Complaint Text</label>
         <textarea id="igText" placeholder="e.g. My UPI payment of Rs 2000 failed but money was deducted..."></textarea>
       </div>
@@ -1812,6 +1820,14 @@ async function submitComplaint(){
   const channel = document.getElementById('igChan').value;
   const fileInput = document.getElementById('igFile');
   const file = fileInput ? fileInput.files[0] : null;
+  const customerId = document.getElementById('igCustId').value.trim();
+  const transactionId = document.getElementById('igTxId').value.trim();
+
+  // Validate that customer_id is required
+  if(!customerId){
+    showToast('Customer ID is required','error');
+    return;
+  }
 
   if(!text && !file){ showToast('Please enter complaint text or attach a file','error'); return; }
   const btn = document.getElementById('igBtn');
@@ -1844,7 +1860,14 @@ async function submitComplaint(){
   try{
     await apiFetch('/complaints/ingest',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({channel,raw_text:text,media_file:mediaFile,media_type:mediaType})
+      body:JSON.stringify({
+        channel,
+        raw_text:text,
+        media_file:mediaFile,
+        media_type:mediaType,
+        customer_id:customerId,
+        transaction_id:transactionId || null
+      })
     });
     showToast('Complaint ingested and triaged.','success');
   }catch{
@@ -1855,6 +1878,8 @@ async function submitComplaint(){
     }
     ALL.unshift({
       id:'c_'+Date.now(), channel, raw_text:text, masked_text:text || '[Attached Media File]',
+      customer_id: customerId,
+      transaction_id: transactionId || null,
       channel_metadata: {attachments: attachments},
       received_at:new Date().toISOString(), status:'pending',
       escalation_level:'L1 Agent', escalation_history:[], communication_history:[
@@ -1876,6 +1901,8 @@ async function submitComplaint(){
   }finally{
     btn.disabled=false; btn.innerHTML=`<span class="with-icon">${icon('bot','sm')} Analyse & Submit</span>`;
     document.getElementById('igText').value='';
+    document.getElementById('igCustId').value='';
+    document.getElementById('igTxId').value='';
     if(fileInput) fileInput.value = '';
     document.getElementById('ingestOv').style.display='none';
     await loadAll(); render();

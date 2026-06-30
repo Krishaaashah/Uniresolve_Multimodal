@@ -83,12 +83,23 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
         is_replay = payload.source_ref and payload.source_ref.startswith("replay-")
         if is_seed or is_replay:
             if "voice_note" in payload.media_file or "audio" in payload.media_type:
-                media_desc = "[Simulated Audio Transcription]: Yes, hello. I was trying to withdraw 10,000 rupees from the Delhi Airport ATM. The machine failed to dispense cash but debited my account. Please reverse it."
+                media_desc = "[Simulated Audio Transcription]: Yes, hello. I was trying to withdraw 10,000 rupees from the Delhi Airport ATM. The machine failed to dispense cash but debited my account. Please reverse it.\n[Extracted ID: Customer=CUST-30482, Transaction=TXN-30482-F1]"
             else:
-                media_desc = "[Simulated Image Analysis]: Visual screenshot of a failed mobile banking app transaction. Customer Aarav Sharma, Account 9102837465, Rs 3,000.00 failed UPI transfer with reference UPI657483."
+                media_desc = "[Simulated Image Analysis]: Visual screenshot of a failed mobile banking app transaction. Customer Aarav Sharma, Account 9102837465, Rs 3,000.00 failed UPI transfer with reference UPI657483.\n[Extracted ID: Customer=CUST-10245, Transaction=TXN-10245-F1]"
         else:
             from app.services.multimodal import process_multimodal_attachment
             media_desc = process_multimodal_attachment(payload.media_file, payload.media_type)
+
+        # Parse extracted IDs from multimodal description
+        import re
+        match = re.search(r"\[Extracted ID:\s*Customer=([^,\n\]]+),\s*Transaction=([^,\n\]]+)\]", media_desc)
+        if match:
+            c_val = match.group(1).strip()
+            t_val = match.group(2).strip()
+            if not payload.customer_id and c_val != "None":
+                payload.customer_id = c_val
+            if not payload.transaction_id and t_val != "None":
+                payload.transaction_id = t_val
 
         if payload.raw_text:
             payload.raw_text = f"{payload.raw_text}\n\n[Media Attachment Analysis ({payload.media_type})]:\n{media_desc}"
@@ -112,6 +123,7 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
         masked_text=masked_text,
         masked_fields=masked_fields,
         customer_id=payload.customer_id,
+        transaction_id=payload.transaction_id,
         source_ref=payload.source_ref,
         received_at=received_at,
         triage=triage_result,

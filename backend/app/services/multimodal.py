@@ -46,7 +46,11 @@ def process_multimodal_attachment(base64_data: str, mime_type: str) -> str:
         "Identify the core customer complaint from this attachment. Transcribe any speech in audio/video, "
         "or describe what is shown in the image. Be specific, capture error messages, account details, "
         "transaction amounts, and customer emotions. Provide a clean, direct transcription/description of the grievance "
-        "as if written by the customer. Do not include introductory notes or meta-commentary, just the transcribed/described text."
+        "as if written by the customer. Do not include introductory notes or meta-commentary, just the transcribed/described text.\n\n"
+        "At the very end of your response, on a new line, append the extracted customer ID (matching pattern CUST-XXXXX or similar) "
+        "and transaction ID (matching pattern TXN-XXXXX or similar) inside a structured block using this exact format:\n"
+        "[Extracted ID: Customer=CUST-XXXXX, Transaction=TXN-XXXXX]\n"
+        "If either is not found, print None (e.g. Customer=None)."
     )
 
     # 1. Try Gemini

@@ -79,6 +79,7 @@ class RawComplaintIn(BaseModel):
     raw_text: Optional[str] = Field(default="", max_length=5000, validation_alias=AliasChoices("raw_text", "complaint_text"))
     channel_metadata: dict[str, Any] = Field(default_factory=dict)
     customer_id: Optional[str] = None
+    transaction_id: Optional[str] = None
     source_ref: Optional[str] = None
     received_at: Optional[datetime] = None
     media_file: Optional[str] = None
@@ -95,6 +96,11 @@ class RawComplaintIn(BaseModel):
     def validate_content_present(self) -> RawComplaintIn:
         if not self.raw_text and not self.media_file:
             raise ValueError("Either raw_text (complaint_text) or media_file must be provided.")
+        # Manual submissions require customer_id
+        is_seed = self.channel_metadata.get("seed") is True
+        is_replay = self.source_ref and self.source_ref.startswith("replay-")
+        if not (is_seed or is_replay) and not self.customer_id:
+            raise ValueError("Customer ID is required")
         return self
 
 
@@ -154,6 +160,7 @@ class Complaint(BaseModel):
     masked_text: str
     masked_fields: list[str] = Field(default_factory=list)
     customer_id: Optional[str] = None
+    transaction_id: Optional[str] = None
     source_ref: Optional[str] = None
     received_at: datetime = Field(default_factory=datetime.utcnow)
     triage: Optional[TriageResult] = None
