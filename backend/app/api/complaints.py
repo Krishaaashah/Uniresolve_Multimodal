@@ -4,9 +4,12 @@ import csv
 import io
 import json
 import os
+import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
@@ -108,13 +111,31 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
 
     masked_text, masked_fields = mask_pii(payload.raw_text)
 
-    # Check transaction status on ingestion
+    is_seed = payload.channel_metadata.get("seed") is True
+    is_replay = payload.source_ref and payload.source_ref.startswith("replay-")
+
+    # Validate Customer ID and Transaction ID presence for manual submissions
+    if not (is_seed or is_replay):
+        if not payload.customer_id or not payload.transaction_id:
+            if payload.media_file:
+                raise HTTPException(status_code=422, detail="IDs not detected — please enter manually")
+            else:
+                raise HTTPException(status_code=422, detail="Customer ID and Transaction ID are both required")
+
+    # Check transaction status on ingestion and validate against the transactions table
     tx_note = None
     if payload.transaction_id:
         tx = store.get_transaction(payload.transaction_id)
+        if not (is_seed or is_replay):
+            if not tx:
+                raise HTTPException(status_code=422, detail="Unknown Transaction ID")
+            if tx.get("customer_id") != payload.customer_id:
+                logger.warning(f"Transaction owner mismatch: transaction={payload.transaction_id} (owner={tx.get('customer_id')}), submitted customer_id={payload.customer_id}")
+                raise HTTPException(status_code=422, detail="Transaction does not belong to this customer")
+        
         if tx:
             tx_status = tx.get("status")
-            tx_date = tx.get("created_at") or "unknown date"
+            tx_date = tx.get("date") or tx.get("created_at") or "unknown date"
             tx_amount = tx.get("amount") or "0"
             if tx_status == "completed":
                 tx_note = f"Transaction {payload.transaction_id} was successfully completed on {tx_date}."

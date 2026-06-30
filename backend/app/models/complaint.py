@@ -74,6 +74,11 @@ class MessageAuthor(str, Enum):
     SYSTEM = "system"
 
 
+class DynamicCategory(str):
+    @property
+    def value(self) -> str:
+        return self
+
 class RawComplaintIn(BaseModel):
     channel: Channel
     raw_text: Optional[str] = Field(default="", max_length=5000, validation_alias=AliasChoices("raw_text", "complaint_text"))
@@ -96,16 +101,18 @@ class RawComplaintIn(BaseModel):
     def validate_content_present(self) -> RawComplaintIn:
         if not self.raw_text and not self.media_file:
             raise ValueError("Either raw_text (complaint_text) or media_file must be provided.")
-        # Manual submissions require customer_id
+        # Manual submissions require both customer_id and transaction_id
         is_seed = self.channel_metadata.get("seed") is True
         is_replay = self.source_ref and self.source_ref.startswith("replay-")
-        if not (is_seed or is_replay) and not self.customer_id:
-            raise ValueError("Customer ID is required")
+        if not (is_seed or is_replay):
+            if not self.media_file:
+                if not self.customer_id or not self.transaction_id:
+                    raise ValueError("Customer ID and Transaction ID are both required")
         return self
 
 
 class TriageResult(BaseModel):
-    category: Category = Category.GENERAL
+    category: Any = "general"
     severity: Severity = Severity.MEDIUM
     sentiment: Sentiment = Sentiment.NEUTRAL
     key_issue: str = ""
@@ -114,6 +121,16 @@ class TriageResult(BaseModel):
     confidence: float = 0.75
     detected_language: str = "English"
     severity_reason: Optional[str] = None
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def validate_category(cls, v: Any) -> DynamicCategory:
+        if isinstance(v, Enum):
+            return DynamicCategory(v.value)
+        if isinstance(v, str):
+            return DynamicCategory(v)
+        return DynamicCategory(str(v))
+
 
 
 class DuplicateCluster(BaseModel):
