@@ -30,7 +30,8 @@ from app.models.complaint import (
     ReplyMessage,
     Severity,
 )
-from app.security import check_api_key
+from app.security import check_api_key, get_current_user, require_role
+from pydantic import BaseModel
 from app.services.clustering import get_clustering_service
 from app.services.pii_scrubber import mask_pii
 from app.services.store import get_store
@@ -42,91 +43,33 @@ from app.config import (
 router = APIRouter(prefix="/complaints", tags=["complaints"])
 limiter = Limiter(key_func=get_remote_address)
 _root_cause_cache: dict[str, tuple[datetime, dict]] = {}
+from app.services.llm import _claude_json, _claude_text
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+@router.post("/auth/login", tags=["auth"])
+async def auth_login(payload: LoginIn):
+    store = get_store()
+    user = store.verify_user(payload.username, payload.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    
+    from app.security import create_access_token
+    token = create_access_token(payload.username, user["role"], user["tenant_id"])
+    
+    # Audit log
+    store.log_audit(payload.username, user["role"], "login")
+    
+    return {
+        "access_token": token,
+        "role": user["role"],
+        "username": payload.username,
+        "tenant_id": user["tenant_id"]
+    }
 
 
-def _claude_json(system: str, user: str, fallback: dict) -> dict:
-    if GEMINI_API_KEY:
-        try:
-            import httpx
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{
-                    "parts": [{"text": f"Instruction: {system}\n\nInput: {user}"}]
-                }],
-                "generationConfig": {
-                    "responseMimeType": "application/json",
-                    "maxOutputTokens": 600
-                }
-            }
-            res = httpx.post(url, json=payload, headers=headers, timeout=15.0)
-            if res.status_code == 200:
-                data = res.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                start = text.find("{")
-                end = text.rfind("}") + 1
-                return json.loads(text[start:end])
-        except Exception:
-            pass
-
-    if ANTHROPIC_API_KEY:
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            msg = client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=600,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-            )
-            text = "".join(block.text for block in msg.content if getattr(block, "type", "") == "text").strip()
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            return json.loads(text[start:end])
-        except Exception:
-            pass
-
-    return fallback
-
-
-def _claude_text(system: str, user: str, fallback: str) -> str:
-    if GEMINI_API_KEY:
-        try:
-            import httpx
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{
-                    "parts": [{"text": f"Instruction: {system}\n\nInput: {user}"}]
-                }],
-                "generationConfig": {
-                    "maxOutputTokens": 120
-                }
-            }
-            res = httpx.post(url, json=payload, headers=headers, timeout=15.0)
-            if res.status_code == 200:
-                data = res.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                if text:
-                    return text
-        except Exception:
-            pass
-
-    if ANTHROPIC_API_KEY:
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            msg = client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=120,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-            )
-            return "".join(block.text for block in msg.content if getattr(block, "type", "") == "text").strip() or fallback
-        except Exception:
-            pass
-
-    return fallback
 
 
 @router.post("/ingest", response_model=ComplaintResponse, dependencies=[Depends(check_api_key)])
@@ -199,33 +142,40 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
     )
     complaint.cluster = get_clustering_service().check_and_register(complaint.id, masked_text)
     store.save(complaint)
+    store.log_audit("system", "system", "ingest", complaint.id)
     return ComplaintResponse(complaint=complaint, message="Complaint ingested and triaged successfully.")
 
 
+
 @router.get("/stats", response_model=DashboardStats)
-async def get_stats():
-    return get_store().get_stats()
+async def get_stats(current_user: dict = Depends(get_current_user)):
+    tenant = current_user.get("tenant_id", "Union Bank")
+    return get_store().get_stats(tenant_id=tenant)
 
 
 @router.get("/alerts")
-async def get_alerts():
-    alerts = [c for c in get_store().all() if c.cluster and c.cluster.systemic_alert]
+async def get_alerts(current_user: dict = Depends(get_current_user)):
+    tenant = current_user.get("tenant_id", "Union Bank")
+    alerts = [c for c in get_store().all() if c.cluster and c.cluster.systemic_alert and c.tenant_id == tenant]
     return {"alerts": alerts, "count": len(alerts)}
 
 
 @router.get("/sla-breached", response_model=list[Complaint])
-async def sla_breached():
-    return get_store().get_sla_breached()
+async def sla_breached(current_user: dict = Depends(get_current_user)):
+    tenant = current_user.get("tenant_id", "Union Bank")
+    return [c for c in get_store().get_sla_breached() if c.tenant_id == tenant]
 
 
 @router.get("/root-cause")
-async def root_cause(category: Optional[str] = None, days: int = Query(7, ge=1, le=90)):
+async def root_cause(category: Optional[str] = None, days: int = Query(7, ge=1, le=90), current_user: dict = Depends(get_current_user)):
     cache_key = f"{category or 'all'}:{days}"
     cached = _root_cause_cache.get(cache_key)
     if cached and datetime.utcnow() - cached[0] < timedelta(minutes=10):
         return cached[1]
     since = datetime.utcnow() - timedelta(days=days)
-    complaints = [c for c in get_store().all() if c.received_at >= since]
+    tenant = current_user.get("tenant_id", "Union Bank")
+    complaints = [c for c in get_store().all() if c.received_at >= since and c.tenant_id == tenant]
+
     if category:
         complaints = [c for c in complaints if c.triage and c.triage.category.value == category]
     if len(complaints) < 3:
@@ -252,51 +202,76 @@ async def regulatory_report_new(
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     format: str = Query("json", pattern="^(json|csv)$"),
+    current_user: dict = Depends(require_role(["supervisor", "admin"]))
 ):
     complaints = get_store().all()
+    tenant = current_user.get("tenant_id", "Union Bank")
+    complaints = [c for c in complaints if c.tenant_id == tenant]
     start = datetime.fromisoformat(from_date) if from_date else datetime.utcnow() - timedelta(days=30)
+
     end = datetime.fromisoformat(to_date) if to_date else datetime.utcnow()
-    complaints = [c for c in complaints if start <= c.received_at <= end]
-    total = len(complaints)
-    resolved = [c for c in complaints if c.status == ComplaintStatus.RESOLVED]
-    top_issues = Counter(issue for c in complaints if c.triage for issue in (c.triage.key_issues or [c.triage.key_issue]) if issue)
-    sla_counts = Counter(c.sla_status.value for c in complaints)
-    res_hours = [(c.resolved_at - c.received_at).total_seconds() / 3600 for c in resolved if c.resolved_at]
+
+    # CMS Ledger math:
+    opening = [c for c in complaints if c.received_at < start and (c.resolved_at is None or c.resolved_at >= start)]
+    opening_balance = len(opening)
+
+    received = [c for c in complaints if start <= c.received_at <= end]
+    received_count = len(received)
+
+    disposed = [c for c in complaints if c.resolved_at and start <= c.resolved_at <= end]
+    disposed_count = len(disposed)
+
+    closed_within_30 = 0
+    closed_beyond_30 = 0
+    for c in disposed:
+        delta_days = (c.resolved_at - c.received_at).days
+        if delta_days <= 30:
+            closed_within_30 += 1
+        else:
+            closed_beyond_30 += 1
+
+    closing = [c for c in complaints if c.received_at <= end and (c.resolved_at is None or c.resolved_at > end)]
+    closing_balance = len(closing)
+
+    total_active = opening_balance + received_count
+    disposed_rate_percent = round(disposed_count / total_active * 100, 1) if total_active else 100.0
+
     report = {
+        "period": "Last 30 Days",
+        "generated_at": datetime.utcnow().isoformat(),
         "report_period": {"from": start.isoformat(), "to": end.isoformat()},
-        "total_complaints": total,
-        "by_channel": dict(Counter(c.channel.value for c in complaints)),
-        "by_category": dict(Counter(c.triage.category.value for c in complaints if c.triage)),
-        "by_severity": dict(Counter(c.triage.severity.value for c in complaints if c.triage)),
-        "resolution_stats": {
-            "resolved": len(resolved),
-            "pending": sum(c.status == ComplaintStatus.PENDING for c in complaints),
-            "escalated": sum(c.status == ComplaintStatus.ESCALATED for c in complaints),
-            "avg_resolution_hours": round(sum(res_hours) / len(res_hours), 2) if res_hours else 0.0,
-        },
-        "sla_compliance": {
-            "on_track": sla_counts.get("on_track", 0),
-            "at_risk": sla_counts.get("at_risk", 0),
-            "breached": sla_counts.get("breached", 0),
-            "compliance_rate_percent": round((total - sla_counts.get("breached", 0)) / total * 100 if total else 100, 1),
-        },
-        "top_issues": [{"issue": k, "count": v} for k, v in top_issues.most_common(5)],
+        "opening_balance": opening_balance,
+        "received": received_count,
+        "disposed_within_30": closed_within_30,
+        "disposed_beyond_30": closed_beyond_30,
+        "disposed_total": disposed_count,
+        "closing_balance": closing_balance,
+        "disposed_rate_percent": disposed_rate_percent,
+        "by_channel": dict(Counter(c.channel.value for c in received)),
+        "by_category": dict(Counter(c.triage.category.value for c in received if c.triage)),
+        "by_severity": dict(Counter(c.triage.severity.value for c in received if c.triage)),
     }
+
     if format == "json":
         return report
+
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["section", "metric", "value"])
     writer.writerow(["period", "from", report["report_period"]["from"]])
     writer.writerow(["period", "to", report["report_period"]["to"]])
-    writer.writerow(["summary", "total_complaints", total])
+    writer.writerow(["cms_summary", "opening_balance", report["opening_balance"]])
+    writer.writerow(["cms_summary", "received", report["received"]])
+    writer.writerow(["cms_summary", "disposed_within_30", report["disposed_within_30"]])
+    writer.writerow(["cms_summary", "disposed_beyond_30", report["disposed_beyond_30"]])
+    writer.writerow(["cms_summary", "disposed_total", report["disposed_total"]])
+    writer.writerow(["cms_summary", "closing_balance", report["closing_balance"]])
+    writer.writerow(["cms_summary", "disposed_rate_percent", report["disposed_rate_percent"]])
+    
     for section in ("by_channel", "by_category", "by_severity"):
         for key, value in report[section].items():
             writer.writerow([section, key, value])
-    for key, value in report["resolution_stats"].items():
-        writer.writerow(["resolution_stats", key, value])
-    for key, value in report["sla_compliance"].items():
-        writer.writerow(["sla_compliance", key, value])
+            
     return Response(
         content=output.getvalue(),
         media_type="text/csv",
@@ -304,18 +279,23 @@ async def regulatory_report_new(
     )
 
 
+
 @router.get("/trends")
 async def trends(
     group_by: str = Query("category", pattern="^(category|channel|severity|sentiment)$"),
     window: str = Query("7d", pattern="^(1d|7d|30d)$"),
+    current_user: dict = Depends(get_current_user)
 ):
     days = int(window[:-1])
     now = datetime.utcnow()
     start = now - timedelta(days=days)
     prior_start = start - timedelta(days=days)
     complaints = get_store().all()
+    tenant = current_user.get("tenant_id", "Union Bank")
+    complaints = [c for c in complaints if c.tenant_id == tenant]
     current = [c for c in complaints if c.received_at >= start]
     prior = [c for c in complaints if prior_start <= c.received_at < start]
+
 
     def label(c: Complaint) -> str:
         if group_by == "channel":
@@ -341,8 +321,10 @@ async def trends(
 
 
 @router.get("/regulatory-report", response_model=RegulatoryReport)
-async def regulatory_report_legacy():
-    return get_store().get_regulatory_report()
+async def regulatory_report_legacy(current_user: dict = Depends(require_role(["supervisor", "admin"]))):
+    tenant = current_user.get("tenant_id", "Union Bank")
+    return get_store().get_regulatory_report(tenant_id=tenant)
+
 
 
 @router.get("", response_model=list[Complaint])
@@ -353,8 +335,12 @@ async def list_complaints(
     category: Optional[Category] = Query(None),
     search: Optional[str] = Query(None),
     limit: int = Query(100, le=500),
+    current_user: dict = Depends(get_current_user)
 ):
     complaints = get_store().all()
+    tenant = current_user.get("tenant_id", "Union Bank")
+    complaints = [c for c in complaints if c.tenant_id == tenant]
+
     if status:
         complaints = [c for c in complaints if c.status == status]
     if channel:
@@ -384,8 +370,8 @@ async def get_complaint(complaint_id: str):
     return c
 
 
-@router.get("/{complaint_id}/explain", dependencies=[Depends(check_api_key)])
-async def explain_triage(complaint_id: str):
+@router.get("/{complaint_id}/explain")
+async def explain_triage(complaint_id: str, current_user: dict = Depends(get_current_user)):
     c = get_store().get(complaint_id)
     if not c:
         raise HTTPException(status_code=404, detail="Complaint not found")
@@ -408,8 +394,8 @@ async def explain_triage(complaint_id: str):
     }}
 
 
-@router.post("/{complaint_id}/action", dependencies=[Depends(check_api_key)])
-async def agent_action(complaint_id: str, action: AgentAction):
+@router.post("/{complaint_id}/action")
+async def agent_action(complaint_id: str, action: AgentAction, current_user: dict = Depends(get_current_user)):
     store = get_store()
     if not store.get(complaint_id):
         raise HTTPException(status_code=404, detail="Complaint not found")
@@ -418,11 +404,23 @@ async def agent_action(complaint_id: str, action: AgentAction):
     if not new_status:
         raise HTTPException(status_code=400, detail=f"Unknown action: {action.action}")
     updated = store.update_status(complaint_id, new_status, agent_note=action.custom_response)
+    
+    # Audit log
+    store.log_audit(current_user["username"], current_user["role"], f"action: {action.action}", complaint_id)
     return {"complaint_id": complaint_id, "new_status": new_status, "complaint": updated}
 
 
-@router.post("/{complaint_id}/escalate", dependencies=[Depends(check_api_key)])
-async def escalate_complaint(complaint_id: str, action: EscalationAction):
+@router.post("/{complaint_id}/escalate")
+async def escalate_complaint(complaint_id: str, action: EscalationAction, current_user: dict = Depends(get_current_user)):
+    # Role check: L4 Regulatory requires supervisor+
+    from app.models.complaint import EscalationLevel
+    if action.to_level == EscalationLevel.L4_REGULATORY:
+        if current_user.get("role") not in ["supervisor", "admin"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Action requires supervisor or admin role."
+            )
+            
     store = get_store()
     c = store.get(complaint_id)
     if not c:
@@ -432,25 +430,50 @@ async def escalate_complaint(complaint_id: str, action: EscalationAction):
         raise HTTPException(status_code=422, detail="agent_note is required")
     record = EscalationRecord(from_level=c.escalation_level, to_level=action.to_level, reason=action.reason or note, escalated_by=action.agent_id, note=note)
     updated = store.escalate(complaint_id, record, action.to_level)
+    
+    # Audit log
+    store.log_audit(current_user["username"], current_user["role"], f"escalate to {action.to_level.value}", complaint_id)
     return {"complaint_id": complaint_id, "escalated_to": action.to_level, "complaint": updated}
 
 
-@router.post("/{complaint_id}/reply", dependencies=[Depends(check_api_key)])
-async def add_reply(complaint_id: str, msg: ReplyMessage):
+@router.post("/{complaint_id}/reply")
+async def add_reply(complaint_id: str, msg: ReplyMessage, current_user: dict = Depends(get_current_user)):
     store = get_store()
     if not store.get(complaint_id):
         raise HTTPException(status_code=404, detail="Complaint not found")
     new_msg = HistoryMessage(author=msg.author, author_name=msg.author_name, content=msg.content, is_ai_draft=msg.is_ai_draft)
     updated = store.add_message(complaint_id, new_msg)
+    
+    # Audit log
+    store.log_audit(current_user["username"], current_user["role"], "reply", complaint_id)
     return {"complaint_id": complaint_id, "message": new_msg, "complaint": updated}
 
 
-@router.post("/{complaint_id}/link-customer", dependencies=[Depends(check_api_key)])
-async def link_customer(complaint_id: str, payload: dict):
+@router.post("/{complaint_id}/link-customer")
+async def link_customer(complaint_id: str, payload: dict, current_user: dict = Depends(get_current_user)):
     store = get_store()
     c = store.get(complaint_id)
     if not c:
         raise HTTPException(status_code=404, detail="Complaint not found")
     c.customer_id = payload.get("customer_id")
     store.save(c)
+    
+    # Audit log
+    store.log_audit(current_user["username"], current_user["role"], f"link customer: {c.customer_id}", complaint_id)
     return {"success": True, "complaint": c}
+
+
+@router.get("/audit", tags=["audit"])
+async def get_audit(
+    complaint_id: Optional[str] = Query(None),
+    current_user: dict = Depends(require_role(["admin"]))
+):
+    store = get_store()
+    return store.get_audit_logs(complaint_id=complaint_id)
+
+
+@router.get("/{complaint_id}/audit", tags=["audit"])
+async def get_complaint_audit(complaint_id: str, current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    return store.get_audit_logs(complaint_id=complaint_id)
+

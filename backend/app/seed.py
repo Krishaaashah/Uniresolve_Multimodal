@@ -24,8 +24,9 @@ from app.services.pii_scrubber import mask_pii
 from app.services.store import get_store
 
 
-def build_complaint(raw, channel, category, severity, status, days_ago, sentiment=Sentiment.FRUSTRATED, cluster_id=None, duplicate_of=None, customer_id=None, attachment_file=None, attachment_type=None):
+def build_complaint(raw, channel, category, severity, status, days_ago, sentiment=Sentiment.FRUSTRATED, cluster_id=None, duplicate_of=None, customer_id=None, attachment_file=None, attachment_type=None, tenant_id="Union Bank"):
     import os
+
     import shutil
     received_at = datetime.utcnow() - timedelta(days=days_ago, hours=days_ago % 5)
     masked, fields = mask_pii(raw)
@@ -56,6 +57,13 @@ def build_complaint(raw, channel, category, severity, status, days_ago, sentimen
             except Exception as e:
                 print(f"Error copying seed attachment: {e}")
                 
+    detected_lang = "English"
+    if any(ord(c) >= 0x0900 and ord(c) <= 0x097F for c in raw):
+        if "माझ्या" in raw or "आहे" in raw or "वजा" in raw:
+            detected_lang = "Marathi"
+        else:
+            detected_lang = "Hindi"
+
     complaint = Complaint(
         id=complaint_id,
         channel=channel,
@@ -73,7 +81,9 @@ def build_complaint(raw, channel, category, severity, status, days_ago, sentimen
             key_issues=[key_issue],
             suggested_response="Dear Customer, we have registered your complaint and our team is reviewing it on priority. We will update you within the applicable SLA.",
             confidence=0.88,
+            detected_language=detected_lang,
         ),
+
         cluster=DuplicateCluster(
             cluster_id=cluster_id or str(uuid4()),
             is_duplicate=bool(duplicate_of),
@@ -84,7 +94,9 @@ def build_complaint(raw, channel, category, severity, status, days_ago, sentimen
         status=status,
         escalation_level=EscalationLevel.L2_SUPERVISOR if status == ComplaintStatus.ESCALATED else EscalationLevel.L1_AGENT,
         resolved_at=(received_at + timedelta(hours=6)) if status == ComplaintStatus.RESOLVED else None,
+        tenant_id=tenant_id,
     )
+
     complaint.communication_history = [
         HistoryMessage(author=MessageAuthor.CUSTOMER, author_name="Customer", content=raw, timestamp=received_at),
         HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content=f"Seed triage: {category.value} | {severity.value}", timestamp=received_at + timedelta(minutes=2)),
@@ -101,6 +113,20 @@ def main():
     store.clear()
     dup_cluster = str(uuid4())
     rows = [
+        # Hindi & Marathi vernacular complaints
+        ("मेरा यूपीआई ट्रांसफर फेल हो गया है लेकिन मेरे बैंक खाते से 5000 रुपये कट गए हैं। कृपया वापस करें।", Channel.APP, Category.UPI, Severity.CRITICAL, ComplaintStatus.PENDING, 0, Sentiment.ANGRY, None, None, "CUST-HIN1", None, None, "UBI Subsidiary"),
+
+        ("माझ्या खात्यातून गृहकर्जाचे ईएमआय दोनदा वजा झाले आहे. कृपया त्वरित पैसे परत करा.", Channel.EMAIL, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING, 1, Sentiment.ANGRY, None, None, "CUST-MAR1", None, None, "UBI Subsidiary"),
+
+        
+        # PII-heavy complaints
+        ("Dear Union Bank, this is Aarav Sharma. Fraud transaction on my Debit Card 4532-7102-8394-1025. Please block it immediately. My Aadhaar is 8293-1029-4820 and Mobile is +91-9820192837. Account number 9102837465.", Channel.WEB, Category.CREDIT_CARD, Severity.CRITICAL, ComplaintStatus.PENDING, 2, Sentiment.ANGRY, None, None, "CUST-30482", None, None),
+        
+        # 31+ days old complaints (for 30-day regulatory clock check)
+        ("I have been waiting for my home loan foreclosure letter since May 1st. It has been more than 35 days. No response from Branch Manager.", Channel.BRANCH, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING, 35, Sentiment.FRUSTRATED, None, None, "CUST-OLD1", None, None),
+        ("Insurance policy activation is pending for 45 days. My mobile number is 9876543210. Reference claim is 98765.", Channel.EMAIL, Category.INSURANCE, Severity.MEDIUM, ComplaintStatus.PENDING, 45, Sentiment.FRUSTRATED, None, None, "CUST-OLD2", None, None),
+        
+        # Legacy rows
         ("Fraudulent credit card charge of Rs 18,500 appeared today. I did not authorise this transaction.", Channel.WEB, Category.CREDIT_CARD, Severity.CRITICAL, ComplaintStatus.ESCALATED, 1, Sentiment.ANGRY, None, None, "CUST-30482", None, None),
         ("My mobile banking app shows a successful transfer but the beneficiary has not received money.", Channel.APP, Category.MOBILE_BANKING, Severity.CRITICAL, ComplaintStatus.PENDING, 0, Sentiment.ANGRY, dup_cluster, None, "CUST-10245", "app_error.png", "image/png"),
         ("Mobile banking transfer succeeded on screen but beneficiary did not receive the amount.", Channel.APP, Category.MOBILE_BANKING, Severity.HIGH, ComplaintStatus.PENDING, 0, Sentiment.FRUSTRATED, dup_cluster, "seed-duplicate", "CUST-10245", None, None),
@@ -125,11 +151,12 @@ def main():
     saved = []
     for idx, row in enumerate(rows):
         c = build_complaint(*row)
-        if row[7] == dup_cluster and idx == 1:
+        if row[7] == dup_cluster and row[8] is None:
             saved_dup_id = c.id
         if row[8] == "seed-duplicate":
             c.cluster.duplicate_of = saved_dup_id
         saved.append(store.save(c))
+
     print(f"Seeded {len(saved)} complaints into backend/complaints.db")
 
 

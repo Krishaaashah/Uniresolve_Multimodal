@@ -100,6 +100,10 @@ main{flex:1;overflow-y:auto;padding:22px}
 .pill.st-in_review{background:#bee3f8;color:#2c5282}
 .pill.st-resolved{background:#c6f6d5;color:#276749}
 .pill.st-escalated{background:#fed7d7;color:#c53030}
+.pill.rbi-within { background: #f0fff4; color: #38a169; border: 1px solid #9ae6b4; }
+.pill.rbi-approaching { background: #fffaf0; color: #dd6b20; border: 1px solid #f6ad55; }
+.pill.rbi-ombudsman_eligible { background: #fff5f5; color: #e53e3e; border: 1px solid #feb2b2; }
+
 .ckey{font-size:13px;color:var(--blue);font-weight:600;
   background:#ebf4ff;padding:3px 9px;border-radius:6px;
   display:inline-block;margin-bottom:7px}
@@ -389,11 +393,16 @@ main{flex:1;overflow-y:auto;padding:22px}
   <div class="logo"><span class="logo-icon"><svg class="icon lg"><use href="#i-bank"></use></svg></span> Uni<span>Resolve</span></div>
   <div class="hdr-right">
     <div class="sla-bar-hdr pulse" id="alertBadge" style="display:none"><svg class="icon sm"><use href="#i-alert"></use></svg> Systemic Alert Active</div>
+
     <div class="sla-bar-hdr" id="slaBreachBadge" style="display:none"><svg class="icon sm"><use href="#i-clock"></use></svg> SLA Breach</div>
+
+    <div class="sla-bar-hdr" id="dedupHealthBadge" style="display:flex;"><span class="live-dot" style="background:#48bb78"></span><span>Dedup: Healthy</span></div>
     <button class="live-btn" id="liveModeBtn" onclick="toggleLiveMode()"><span class="live-dot"></span><span>Live Demo</span></button>
-    <span style="opacity:.7">Agent: Krisha Shah &nbsp;|&nbsp; <span id="clock"></span></span>
+    <span style="opacity:.7">User: <span id="currentUserDisplay">Agent</span> &nbsp;|&nbsp; <span id="clock"></span> &nbsp;|&nbsp; <a href="#" onclick="logoutUser()" style="color:#fff;text-decoration:underline">Logout</a></span>
   </div>
 </header>
+
+
 
 <div class="layout">
   <nav class="sidebar">
@@ -421,13 +430,16 @@ main{flex:1;overflow-y:auto;padding:22px}
       <div class="tab" onclick="switchTab('history')">History</div>
       <div class="tab" onclick="switchTab('sla_tab')">SLA</div>
       <div class="tab" onclick="switchTab('escalation')">Escalation</div>
+      <div class="tab" onclick="switchTab('audit_tab')">Audit Trail</div>
     </div>
     <div class="pbody">
       <div class="tab-panel active" id="tp-overview"></div>
       <div class="tab-panel" id="tp-history"></div>
       <div class="tab-panel" id="tp-sla_tab"></div>
       <div class="tab-panel" id="tp-escalation"></div>
+      <div class="tab-panel" id="tp-audit_tab"></div>
     </div>
+
     <div class="action-bar" id="actionBar"></div>
   </div>
 </div>
@@ -550,14 +562,24 @@ setInterval(async()=>{ await loadAll(); render(); },60000);
 async function apiFetch(path, opts){
   opts = opts || {};
   const headers = Object.assign({}, opts.headers || {});
+  const token = localStorage.getItem('auth_token');
+  if (token) {
+    headers['Authorization'] = 'Bearer ' + token;
+  }
   headers['X-Api-Key'] = API_KEY;
   const r = await fetch(API+path, Object.assign({}, opts, {headers}));
-  if (r.status === 401) {
-    localStorage.removeItem('UNIRESOLVE_API_KEY');
+  if (r.status === 401 || r.status === 403) {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_role');
+    localStorage.removeItem('auth_username');
+    showToast('Unauthorized - please log in.', 'error');
+    showLoginOverlay();
+    throw new Error(r.status);
   }
   if(!r.ok) throw new Error(r.status);
   return r.json();
 }
+
 async function loadAll(){
   try{ ALL = await apiFetch('/complaints'); }catch{ ALL = mockComplaints(); }
   try{ STATS = await apiFetch('/complaints/stats'); }catch{ STATS = mockStats(); }
@@ -646,29 +668,74 @@ function renderSystemicBanner(){
 async function checkModelReady() {
   try {
     const h = await fetch(API + '/health').then(r => r.json());
+    
+    // Update dedup-health badge
+    const badge = document.getElementById('dedupHealthBadge');
+    if (badge) {
+      if (h.dedup_healthy) {
+        badge.style.background = 'rgba(72,187,120,0.1)';
+        badge.style.color = '#38a169';
+        badge.style.border = '1px solid #38a169';
+        badge.innerHTML = '<span class="live-dot" style="background:#48bb78;width:7px;height:7px;border-radius:50%;display:inline-block"></span><span>Dedup: Healthy</span>';
+      } else {
+        badge.style.background = 'rgba(229,62,62,0.1)';
+        badge.style.color = '#e53e3e';
+        badge.style.border = '1px solid #e53e3e';
+        badge.innerHTML = '<span class="live-dot" style="background:#e53e3e;width:7px;height:7px;border-radius:50%;display:inline-block;animation:pulse 1.2s infinite"></span><span>Duplicate detection: degraded</span>';
+      }
+    }
+    
+    // Toggle demo controls based on readiness
+    const ready = h.model_ready && h.encoder_ready && h.llm_reachable;
+    const btn = document.getElementById('liveModeBtn');
+    const igBtn = document.getElementById('igBtn');
     const banner = document.getElementById('modelWarmBanner');
-    if (!h.model_ready) {
+    
+    if (!ready) {
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+        btn.title = "AI systems warming up...";
+      }
+      if (igBtn) {
+        igBtn.disabled = true;
+        igBtn.style.opacity = '0.5';
+        igBtn.style.cursor = 'not-allowed';
+      }
       if (!banner) {
         const b = document.createElement('div');
         b.id = 'modelWarmBanner';
         b.style.cssText = 'background:#ebf8ff;border:1px solid #90cdf4;border-radius:8px;padding:10px 16px;font-size:13px;margin-bottom:10px;color:#2c5282;font-weight:600;display:flex;align-items:center;gap:8px';
-        b.innerHTML = 'AI classification model warming up - using rule-based triage until ready. Response quality will improve in ~2 minutes.';
+        b.innerHTML = 'AI classification model and vector systems warming up...';
         document.getElementById('systemicBanner').after(b);
       }
-      setTimeout(checkModelReady, 8000);
+      setTimeout(checkModelReady, 5000);
     } else {
+      if (btn) {
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        btn.style.cursor = 'pointer';
+        btn.title = "";
+      }
+      if (igBtn) {
+        igBtn.disabled = false;
+        igBtn.style.opacity = '1';
+        igBtn.style.cursor = 'pointer';
+      }
       if (banner) {
         banner.style.background = '#f0fff4';
         banner.style.borderColor = '#9ae6b4';
         banner.style.color = '#276749';
-        banner.innerHTML = 'AI model ready - full triage active.';
-        setTimeout(() => banner.remove(), 4000);
+        banner.innerHTML = 'All AI models and systems ready.';
+        setTimeout(() => banner.remove(), 3000);
       }
     }
   } catch(e) {
     setTimeout(checkModelReady, 10000);
   }
 }
+
 
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 const CHANNELS = {
@@ -777,8 +844,12 @@ function pills(c){
     <span class="pill ${t.sentiment||'neutral'}">${t.sentiment||'-'}</span>
     <span class="pill st-${c.status}">${(c.status||'').replace('_',' ')}</span>
     ${c.escalation_level&&c.escalation_level!=='L1 Agent'?`<span class="pill" style="background:#e9d8fd;color:#553c9a">${c.escalation_level}</span>`:''}
+    ${t.detected_language?`<span class="pill" style="background:#e2e8f0;color:#4a5568;font-size:11px">${t.detected_language}</span>`:''}
+    ${c.rbi_status?`<span class="pill rbi-${c.rbi_status}">RBI: ${c.rbi_status}</span>`:''}
   `;
 }
+
+
 
 function complaintCard(c){
   const t = c.triage||{};
@@ -1139,10 +1210,33 @@ function renderAnalytics(){
 }
 
 // ── REGULATORY REPORT ────────────────────────────────────────────────────────
+async function downloadRegulatoryCSV() {
+  try {
+    const response = await fetch(API + '/complaints/reports/regulatory?format=csv', {
+      headers: {
+        'X-Api-Key': API_KEY
+      }
+    });
+    if (!response.ok) throw new Error('Download failed');
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'uniresolve-regulatory-report.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    showToast('Regulatory CSV downloaded.', 'success');
+  } catch (e) {
+    showToast('Download failed.', 'error');
+  }
+}
+
 async function renderRegulatory(){
   document.getElementById('viewRoot').innerHTML = '<div class="loading"><div class="spinner"></div>Generating RBI report...</div>';
   let rpt;
-  try{ rpt = await apiFetch('/complaints/regulatory-report'); }
+  try{ rpt = await apiFetch('/complaints/reports/regulatory'); }
   catch{ rpt = mockRegReport(); }
 
   document.getElementById('viewRoot').innerHTML = `
@@ -1150,28 +1244,32 @@ async function renderRegulatory(){
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div>
           <h2 class="with-icon">${icon('report')} Regulatory Compliance Report</h2>
-          <p>Period: ${rpt.period} &nbsp;|&nbsp; Generated: ${fmtDt(rpt.generated_at)}</p>
+          <p>Period: ${rpt.period || 'Last 30 Days'} &nbsp;|&nbsp; Generated: ${fmtDt(rpt.generated_at)}</p>
         </div>
-        <button class="export-btn" onclick="exportReport()"><span class="with-icon">${icon('download','sm')} Export CSV</span></button>
+        <div style="display:flex;gap:8px">
+          <button class="export-btn" style="background:#2b6cb0" onclick="downloadRegulatoryCSV()"><span class="with-icon">${icon('download','sm')} Download CSV (RBI filing)</span></button>
+          <button class="export-btn" onclick="exportReport()"><span class="with-icon">${icon('download','sm')} Export CSV</span></button>
+        </div>
       </div>
     </div>
 
+
     <div class="reg-grid">
       <div class="reg-card">
-        <div class="reg-lbl">Total Complaints</div>
-        <div class="reg-val" style="color:var(--blue)">${rpt.total_complaints}</div>
+        <div class="reg-lbl">Opening Balance</div>
+        <div class="reg-val" style="color:var(--orange)">${rpt.opening_balance || 0}</div>
       </div>
       <div class="reg-card">
-        <div class="reg-lbl">Resolution Rate</div>
-        <div class="reg-val" style="color:var(--green)">${rpt.resolution_rate_pct}%</div>
+        <div class="reg-lbl">Received (New)</div>
+        <div class="reg-val" style="color:var(--blue)">${rpt.received || 0}</div>
       </div>
       <div class="reg-card">
-        <div class="reg-lbl">SLA Compliance</div>
-        <div class="reg-val" style="color:${rpt.sla_compliance_pct>=90?'var(--green)':'var(--red)'}">${rpt.sla_compliance_pct}%</div>
+        <div class="reg-lbl">Disposed (Total)</div>
+        <div class="reg-val" style="color:var(--green)">${rpt.disposed_total || 0}</div>
       </div>
       <div class="reg-card">
-        <div class="reg-lbl">Avg Resolution</div>
-        <div class="reg-val" style="color:var(--blue)">${rpt.avg_resolution_hours}h</div>
+        <div class="reg-lbl">Closing Balance</div>
+        <div class="reg-val" style="color:var(--purple)">${rpt.closing_balance || 0}</div>
       </div>
     </div>
 
@@ -1181,26 +1279,26 @@ async function renderRegulatory(){
         <table class="reg-table">
           <tr><th>Status</th><th>Count</th><th>%</th></tr>
           ${[
-            ['Resolved',rpt.resolved,'var(--green)'],
-            ['Pending',rpt.pending,'var(--orange)'],
-            ['Escalated',rpt.escalated,'var(--purple)'],
+            ['Resolved / Disposed', rpt.disposed_total || 0, 'var(--green)'],
+            ['Pending (Closing)', rpt.closing_balance || 0, 'var(--orange)'],
           ].map(([s,n,c])=>`<tr><td>${s}</td><td style="color:${c};font-weight:700">${n}</td>
-            <td>${rpt.total_complaints?Math.round(n/rpt.total_complaints*100):0}%</td></tr>`).join('')}
+            <td>${(rpt.opening_balance + rpt.received) ? Math.round(n / (rpt.opening_balance + rpt.received) * 100) : 0}%</td></tr>`).join('')}
         </table>
       </div>
       <div class="chart-card">
-        <h3 class="with-icon">${icon('alert')} Compliance Indicators</h3>
+        <h3 class="with-icon">${icon('alert')} CMS Disposal Indicators</h3>
         <table class="reg-table">
           <tr><th>Indicator</th><th>Value</th><th>Status</th></tr>
-          <tr><td>SLA Breaches</td><td style="color:var(--red);font-weight:700">${rpt.sla_breach_count}</td>
-            <td>${rpt.sla_breach_count===0?'Compliant':'Review'}</td></tr>
-          <tr><td>Critical Unresolved</td><td style="color:var(--red);font-weight:700">${rpt.critical_unresolved}</td>
-            <td>${rpt.critical_unresolved===0?'Clear':'Action Needed'}</td></tr>
-          <tr><td>RBI Escalations</td><td style="font-weight:700">${rpt.escalated_to_regulatory}</td>
-            <td>${rpt.escalated_to_regulatory===0?'None':'Filed'}</td></tr>
+          <tr><td>Disposed Within 30 Days</td><td style="color:var(--green);font-weight:700">${rpt.disposed_within_30 || 0}</td>
+            <td>Compliant</td></tr>
+          <tr><td>Disposed Beyond 30 Days</td><td style="color:var(--orange);font-weight:700">${rpt.disposed_beyond_30 || 0}</td>
+            <td>Review</td></tr>
+          <tr><td>Disposal Rate</td><td style="color:var(--green);font-weight:700">${rpt.disposed_rate_percent || 0}%</td>
+            <td>Active</td></tr>
         </table>
       </div>
     </div>
+
 
     <div class="chart-card" style="margin-bottom:22px">
       <h3 class="with-icon">${icon('folder')} Complaints by Category - RBI Format</h3>
@@ -1269,6 +1367,7 @@ function openDetail(id){
   renderSlaTab(c);
   renderEscalationTab(c);
   renderActionBar(c);
+  renderAuditTab(c);
   document.getElementById('detailTitle').innerHTML =
     `<span class="with-icon">${icon('ticket')} ${cleanText(c.triage?.key_issue||'Complaint Detail')}</span>`;
   document.getElementById('detailOv').style.display='flex';
@@ -1279,13 +1378,44 @@ function closeDetail(e){
 }
 function switchTab(tab){
   document.querySelectorAll('.tab').forEach((t,i)=>{
-    const names=['overview','history','sla_tab','escalation'];
+    const names=['overview','history','sla_tab','escalation','audit_tab'];
     t.classList.toggle('active',names[i]===tab);
   });
   document.querySelectorAll('.tab-panel').forEach(p=>{
     p.classList.toggle('active',p.id===`tp-${tab}`);
   });
 }
+
+async function renderAuditTab(c) {
+  const container = document.getElementById('tp-audit_tab');
+  container.innerHTML = '<div class="loading"><div class="spinner"></div>Loading audit trail...</div>';
+  try {
+    const logs = await apiFetch(`/complaints/${c.id}/audit`);
+    if (logs.length === 0) {
+      container.innerHTML = '<p style="color:#718096;padding:20px;text-align:center">No audit logs recorded for this complaint.</p>';
+      return;
+    }
+    let html = '<div style="display:flex;flex-direction:column;gap:12px;padding:12px 0">';
+    logs.forEach(log => {
+      html += `
+        <div style="background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:13px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+            <span style="font-weight:700;color:#2d3748">${cleanText(log.action.toUpperCase())}</span>
+            <span style="color:#a0aec0;font-size:11px">${fmtDt(log.timestamp)}</span>
+          </div>
+          <div style="color:#4a5568">
+            Actor: <strong>${cleanText(log.actor)}</strong> (${cleanText(log.role)})
+          </div>
+        </div>
+      `;
+    });
+    html += '</div>';
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = '<p style="color:#e53e3e;padding:20px;text-align:center">Failed to load audit logs.</p>';
+  }
+}
+
 
 function renderOverview(c){
   const t = c.triage||{};
@@ -1300,7 +1430,11 @@ function renderOverview(c){
       <div class="iblk"><label>Received</label><p>${fmtDt(c.received_at)}</p></div>
       <div class="iblk"><label>Cluster</label><p>${c.cluster?.cluster_size>1?`<span class="with-icon">${icon('link','sm')} ${c.cluster.cluster_size} related</span>`:'Unique'}</p></div>
       <div class="iblk"><label>Customer ID</label><p>${c.customer_id||'Anonymous'}</p></div>
+      <div class="iblk"><label>Language</label><p>${t.detected_language||'English'}</p></div>
+      <div class="iblk"><label>RBI Clock Status</label><p><span class="pill rbi-${c.rbi_status}">${c.rbi_status}</span></p></div>
     </div>
+
+
     <div id="cbsProfileContainer"></div>
     ${renderAttachmentsHtml(c)}
     ${c.cluster?.systemic_alert?`
@@ -2005,17 +2139,118 @@ document.addEventListener('keydown', async e => {
     e.preventDefault();
     showToast('Reseeding demo data...', 'warn');
     try {
-      await fetch(API + '/admin/seed', {method: 'POST'});
+      const res = await fetch(API + '/admin/seed', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + localStorage.getItem('auth_token')
+        }
+      });
+      if (!res.ok) throw new Error(res.status);
       await loadAll();
       render();
       showToast('Demo data reset. 20 fresh complaints loaded.', 'success');
     } catch {
-      showToast('Seed failed - check backend', 'error');
+      showToast('Seed failed - must be admin', 'error');
     }
   }
 });
 
-(async()=>{ await loadAll(); render(); checkModelReady(); })();
+function showLoginOverlay() {
+  let overlay = document.getElementById('loginOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'loginOverlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(26,32,44,0.9);display:flex;justify-content:center;align-items:center;z-index:9999;font-family:inherit;';
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:12px;width:90%;max-width:400px;padding:32px;box-shadow:0 10px 25px rgba(0,0,0,0.2)">
+        <div style="text-align:center;margin-bottom:24px">
+          <div style="font-size:28px;font-weight:700;color:#2b6cb0;margin-bottom:8px">UniResolve</div>
+          <p style="color:#718096;font-size:14px">Hackathon Unified Customer Complaint Portal</p>
+        </div>
+        <div id="loginError" style="color:#e53e3e;font-size:13px;margin-bottom:12px;display:none;font-weight:600"></div>
+        <form onsubmit="handleLogin(event)">
+          <div style="margin-bottom:16px">
+            <label style="display:block;font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px">Username</label>
+            <input type="text" id="loginUsername" required style="width:100%;padding:10px 12px;border:1px solid #cbd5e0;border-radius:6px;font-size:14px" placeholder="agent / supervisor / admin">
+          </div>
+          <div style="margin-bottom:24px">
+            <label style="display:block;font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px">Password</label>
+            <input type="password" id="loginPassword" required style="width:100%;padding:10px 12px;border:1px solid #cbd5e0;border-radius:6px;font-size:14px" placeholder="agent123 / supervisor123 / admin123">
+          </div>
+          <button type="submit" style="width:100%;padding:12px;background:#2b6cb0;color:#fff;border:none;border-radius:6px;font-weight:700;font-size:15px;cursor:pointer;transition:background 0.2s">Login</button>
+        </form>
+        <div style="margin-top:20px;font-size:12px;color:#718096;text-align:center;line-height:1.6">
+          <strong>Pre-seeded Credentials:</strong><br>
+          Agent: <code>agent</code> / <code>agent123</code><br>
+          Supervisor: <code>supervisor</code> / <code>supervisor123</code><br>
+          Admin: <code>admin</code> / <code>admin123</code>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  } else {
+    overlay.style.display = 'flex';
+  }
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const u = document.getElementById('loginUsername').value;
+  const p = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+  try {
+    const res = await fetch(API + '/complaints/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username: u, password: p})
+    });
+    if (!res.ok) {
+      throw new Error('Invalid credentials');
+    }
+    const data = await res.json();
+    localStorage.setItem('auth_token', data.access_token);
+    localStorage.setItem('auth_role', data.role);
+    localStorage.setItem('auth_username', data.username);
+    
+    // Hide login overlay
+    document.getElementById('loginOverlay').style.display = 'none';
+    
+    // Update logged-in agent display
+    document.getElementById('currentUserDisplay').textContent = `${data.username} (${data.role.toUpperCase()})`;
+    
+    // Reload dashboard
+    await loadAll();
+    render();
+    showToast('Logged in successfully.', 'success');
+  } catch(err) {
+    errEl.textContent = 'Invalid username or password.';
+    errEl.style.display = 'block';
+  }
+}
+
+function logoutUser() {
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('auth_role');
+  localStorage.removeItem('auth_username');
+  showToast('Logged out.', 'warn');
+  showLoginOverlay();
+}
+
+(async()=>{
+  const token = localStorage.getItem('auth_token');
+  const role = localStorage.getItem('auth_role');
+  const username = localStorage.getItem('auth_username');
+  if (!token) {
+    showLoginOverlay();
+  } else {
+    document.getElementById('currentUserDisplay').textContent = `${username} (${role.toUpperCase()})`;
+    await loadAll();
+    render();
+    checkModelReady();
+  }
+})();
+
 </script>
 </body>
 </html>

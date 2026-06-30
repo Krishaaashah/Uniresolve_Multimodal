@@ -26,6 +26,7 @@ from app.models.complaint import (
     Severity,
     TriageResult,
     compute_sla,
+    compute_rbi_status,
 )
 
 DB_PATH = Path(__file__).resolve().parents[2] / "complaints.db"
@@ -95,11 +96,66 @@ class ComplaintStore:
                     escalation_level TEXT,
                     escalation_history TEXT,
                     communication_history TEXT,
-                    agent_note TEXT
+                    agent_note TEXT,
+                    detected_language TEXT DEFAULT 'English',
+                    tenant_id TEXT DEFAULT 'Union Bank'
                 )
                 """
             )
+            # Safe table alterations in case database already existed
+            try:
+                conn.execute("ALTER TABLE complaints ADD COLUMN detected_language TEXT DEFAULT 'English'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE complaints ADD COLUMN tenant_id TEXT DEFAULT 'Union Bank'")
+            except sqlite3.OperationalError:
+                pass
+
+            # Create users and audit_log tables
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    password_hash TEXT,
+                    role TEXT,
+                    tenant_id TEXT DEFAULT 'Union Bank'
+                )
+                """
+            )
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN tenant_id TEXT DEFAULT 'Union Bank'")
+            except sqlite3.OperationalError:
+                pass
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id TEXT PRIMARY KEY,
+                    actor TEXT,
+                    role TEXT,
+                    action TEXT,
+                    complaint_id TEXT,
+                    timestamp TEXT
+                )
+                """
+            )
+            # Auto-seed users if empty
+            import hashlib
+            def hash_pw(password: str) -> str:
+                return hashlib.sha256(password.encode()).hexdigest()
+
+            cursor = conn.execute("SELECT COUNT(*) FROM users")
+            if cursor.fetchone()[0] == 0:
+                conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", ("agent", hash_pw("agent123"), "agent", "Union Bank"))
+                conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", ("supervisor", hash_pw("supervisor123"), "supervisor", "Union Bank"))
+                conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", ("admin", hash_pw("admin123"), "admin", "Union Bank"))
+                conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", ("sub_agent", hash_pw("sub_agent123"), "agent", "UBI Subsidiary"))
+            
             conn.commit()
+
+
+
 
     def _row_to_complaint(self, row: sqlite3.Row) -> Complaint:
         key_issues = _loads(row["key_issues"], [])
@@ -107,6 +163,17 @@ class ComplaintStore:
         severity = Severity(row["severity"] or "medium")
         deadline = _dt(row["sla_deadline"])
         sla = None if row["status"] == ComplaintStatus.RESOLVED.value else compute_sla(received_at, severity.value, deadline)
+        
+        try:
+            detected_lang = row["detected_language"] or "English"
+        except Exception:
+            detected_lang = "English"
+            
+        try:
+            tenant_id = row["tenant_id"] or "Union Bank"
+        except Exception:
+            tenant_id = "Union Bank"
+
         triage = TriageResult(
             category=Category(row["category"] or "general"),
             severity=severity,
@@ -115,6 +182,7 @@ class ComplaintStore:
             key_issues=key_issues,
             suggested_response=row["draft_response"] or "",
             confidence=float(row["confidence"] or 0.75),
+            detected_language=detected_lang
         )
         cluster = DuplicateCluster(
             cluster_id=row["cluster_id"] or "",
@@ -150,15 +218,20 @@ class ComplaintStore:
             resolved_at=_dt(row["resolved_at"]),
             created_at=_dt(row["created_at"]) or received_at,
             updated_at=_dt(row["updated_at"]) or received_at,
+            tenant_id=tenant_id,
+            rbi_status=compute_rbi_status(received_at, _dt(row["resolved_at"]))
         )
+
 
     def save(self, complaint: Complaint) -> Complaint:
         now = datetime.utcnow()
         complaint.updated_at = now
+        complaint.rbi_status = compute_rbi_status(complaint.received_at, complaint.resolved_at)
         if complaint.triage and not complaint.sla:
             complaint.sla = compute_sla(complaint.received_at, complaint.triage.severity.value)
         complaint.sla_status = complaint.sla.status if complaint.sla else SLAStatus.ON_TRACK
         complaint.sla_breached = bool(complaint.sla and complaint.sla.breached)
+
         key_issues = complaint.triage.key_issues if complaint.triage and complaint.triage.key_issues else []
         if complaint.triage and complaint.triage.key_issue and complaint.triage.key_issue not in key_issues:
             key_issues = [complaint.triage.key_issue, *key_issues]
@@ -171,8 +244,9 @@ class ComplaintStore:
                     assigned_agent, sla_deadline, sla_breached, duplicate_of, cluster_id,
                     created_at, updated_at, resolved_at, customer_id, source_ref, received_at,
                     confidence, cluster_size, systemic_alert, escalation_level,
-                    escalation_history, communication_history, agent_note
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    escalation_history, communication_history, agent_note,
+                    detected_language, tenant_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     complaint.id,
@@ -205,9 +279,12 @@ class ComplaintStore:
                     _json([e.model_dump(mode="json") for e in complaint.escalation_history]),
                     _json([h.model_dump(mode="json") for h in complaint.communication_history]),
                     complaint.agent_note,
+                    complaint.triage.detected_language if complaint.triage else "English",
+                    complaint.tenant_id,
                 ),
             )
             conn.commit()
+
         return complaint
 
     def get(self, complaint_id: str) -> Optional[Complaint]:
@@ -270,8 +347,10 @@ class ComplaintStore:
     def get_sla_breached(self) -> list[Complaint]:
         return [c for c in self.all() if c.sla_breached or c.sla_status == SLAStatus.BREACHED]
 
-    def get_stats(self) -> DashboardStats:
+    def get_stats(self, tenant_id: Optional[str] = None) -> DashboardStats:
         complaints = self.all()
+        if tenant_id:
+            complaints = [c for c in complaints if c.tenant_id == tenant_id]
         by_category = Counter(c.triage.category.value for c in complaints if c.triage)
         by_severity = Counter(c.triage.severity.value for c in complaints if c.triage)
         by_channel = Counter(c.channel.value for c in complaints)
@@ -297,12 +376,15 @@ class ComplaintStore:
             avg_resolution_minutes=round(sum(res_times) / len(res_times), 2) if res_times else 0.0,
         )
 
-    def get_regulatory_report(self) -> RegulatoryReport:
+    def get_regulatory_report(self, tenant_id: Optional[str] = None) -> RegulatoryReport:
         complaints = self.all()
+        if tenant_id:
+            complaints = [c for c in complaints if c.tenant_id == tenant_id]
         resolved = [c for c in complaints if c.status == ComplaintStatus.RESOLVED]
         res_hours = [(c.resolved_at - c.received_at).total_seconds() / 3600 for c in resolved if c.resolved_at]
         total = len(complaints)
         breached = sum(c.sla_status == SLAStatus.BREACHED for c in complaints)
+
         return RegulatoryReport(
             total_complaints=total,
             resolved=len(resolved),
@@ -319,10 +401,45 @@ class ComplaintStore:
             escalated_to_regulatory=sum(c.escalation_level == EscalationLevel.L4_REGULATORY for c in complaints),
         )
 
+    def log_audit(self, actor: str, role: str, action: str, complaint_id: Optional[str] = None):
+        import uuid
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO audit_log (id, actor, role, action, complaint_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), actor, role, action, complaint_id, datetime.utcnow().isoformat())
+            )
+            conn.commit()
+
+    def get_audit_logs(self, complaint_id: Optional[str] = None) -> list[dict]:
+        with self._connect() as conn:
+            if complaint_id:
+                cursor = conn.execute(
+                    "SELECT * FROM audit_log WHERE complaint_id = ? ORDER BY timestamp DESC",
+                    (complaint_id,)
+                )
+            else:
+                cursor = conn.execute("SELECT * FROM audit_log ORDER BY timestamp DESC")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def verify_user(self, username: str, password_plain: str) -> Optional[dict]:
+        import hashlib
+        def hash_pw(password: str) -> str:
+            return hashlib.sha256(password.encode()).hexdigest()
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE username = ? AND password_hash = ?",
+                (username, hash_pw(password_plain))
+            ).fetchone()
+            if row:
+                return dict(row)
+        return None
+
     def clear(self):
         with self._connect() as conn:
             conn.execute("DELETE FROM complaints")
             conn.commit()
+
 
 
 _store: Optional[ComplaintStore] = None

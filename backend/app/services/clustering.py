@@ -33,6 +33,7 @@ class ClusteringService:
         self.id_map: list[str] = []           # position → complaint_id
         self.cluster_map: dict[str, str] = {} # complaint_id → cluster_id
         self.cluster_counts: dict[str, int] = {}
+        self.healthy = False
         self._load()
 
     def _load(self):
@@ -53,8 +54,11 @@ class ClusteringService:
                 except Exception as e:
                     logger.warning(f"Could not load saved index: {e}. Starting fresh.")
             logger.info("FAISS index ready.")
+            self.healthy = True
         except Exception as e:
             logger.warning(f"Could not load FAISS/SentenceTransformer: {e}. Duplicate detection disabled.")
+            self.healthy = False
+
 
     def _save_index(self):
         try:
@@ -82,8 +86,9 @@ class ClusteringService:
         Returns a DuplicateCluster describing the relationship.
         """
         with self.lock:
-            if self.index is None:
+            if self.index is None or not self.healthy:
                 # No model — every complaint is its own cluster
+
                 new_cluster_id = str(uuid.uuid4())
                 self.cluster_map[complaint_id] = new_cluster_id
                 self.cluster_counts[new_cluster_id] = 1

@@ -18,10 +18,9 @@ from app.models.complaint import (
 from app.config import (
     GEMINI_API_KEY, ANTHROPIC_API_KEY, GEMINI_MODEL, CLAUDE_MODEL
 )
-
+from app.services.llm import _claude_json
 logger = logging.getLogger(__name__)
 
-# ── Keyword maps for rule-based fallback ───────────────────────────────────────
 CATEGORY_KEYWORDS = {
     Category.MOBILE_BANKING: ["mobile banking", "app transfer", "mobile app", "beneficiary add", "fingerprint login"],
     Category.UPI: ["upi", "gpay", "phonepe", "paytm", "bhim", "upi pin", "transaction fail"],
@@ -100,7 +99,7 @@ def _rule_based_triage(text: str, skip_ai_draft: bool = False) -> TriageResult:
     if skip_ai_draft:
         suggested_response = fallback_response
     else:
-        suggested_response = generate_draft_response(text, category, sentiment, severity, fallback_response)
+        suggested_response = generate_draft_response(text, category, sentiment, severity, fallback_response, "English")
 
     return TriageResult(
         category=category,
@@ -110,10 +109,11 @@ def _rule_based_triage(text: str, skip_ai_draft: bool = False) -> TriageResult:
         key_issues=[key_issue],
         suggested_response=suggested_response,
         confidence=0.75,
+        detected_language="English"
     )
 
 
-def generate_draft_response(complaint_text: str, category, sentiment, severity, fallback: str = "") -> str:
+def generate_draft_response(complaint_text: str, category, sentiment, severity, fallback: str = "", detected_language: str = "English") -> str:
     if GEMINI_API_KEY:
         try:
             import httpx
@@ -128,6 +128,7 @@ def generate_draft_response(complaint_text: str, category, sentiment, severity, 
                         f"Sentiment: {getattr(sentiment, 'value', sentiment)}\n"
                         f"Severity: {getattr(severity, 'value', severity)}\n\n"
                         f"Write a professional customer service response for a financial institution. "
+                        f"The customer's language is {detected_language}. Write the response in {detected_language}. "
                         f"Write empathetically and concisely. Do not make up policy details. Max 3 sentences."
                     )}]
                 }],
@@ -156,7 +157,8 @@ def generate_draft_response(complaint_text: str, category, sentiment, severity, 
                 max_tokens=180,
                 system=(
                     "You are a professional customer service agent for a financial institution. "
-                    "Write empathetic, concise complaint responses. Do not make up policy details. Maximum 3 sentences."
+                    f"Write empathetic, concise complaint responses in the language: {detected_language}. "
+                    "Do not make up policy details. Maximum 3 sentences."
                 ),
                 messages=[
                     {
@@ -179,110 +181,103 @@ def generate_draft_response(complaint_text: str, category, sentiment, severity, 
     return fallback or RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES[Category.GENERAL]).format(ref_id="DEMO")
 
 
+
 class TriageService:
     """
-    Wraps FLAN-T5 for inference.
-    Falls back to rule-based on import error or model unavailability.
+    LLM-primary triage service with rule-based fallback.
     """
 
     def __init__(self):
-        self.model = None
-        self.tokenizer = None
-        self._model_ready = False
-        threading.Thread(target=self._load_model, daemon=True).start()
+        self._model_ready = True
 
-    def _load_model(self):
-        try:
-            from transformers import T5ForConditionalGeneration, T5Tokenizer
-            logger.info("Loading FLAN-T5-Base — this may take a minute...")
-            model_name = "google/flan-t5-base"
-            self.tokenizer = T5Tokenizer.from_pretrained(model_name)
-            self.model = T5ForConditionalGeneration.from_pretrained(model_name)
-            self._model_ready = True
-            logger.info("FLAN-T5-Base loaded successfully.")
-        except Exception as e:
-            logger.warning(f"Could not load FLAN-T5 model: {e}. Using rule-based fallback.")
-
-    def _prompt_classify(self, text: str, field: str, options: list[str]) -> str:
-        """Ask the model to classify a single field."""
-        prompt = (
-            f"Classify the following banking customer complaint.\n"
-            f"Field: {field}\n"
-            f"Options: {', '.join(options)}\n"
-            f"Complaint: {text}\n"
-            f"Answer with only one option from the list."
-        )
-        inputs = self.tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
-        outputs = self.model.generate(**inputs, max_new_tokens=20)
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip().lower()
-
-    def _extract_key_issue(self, text: str) -> str:
-        prompt = (
-            f"Summarize the core issue in this banking complaint in one short sentence:\n{text}"
-        )
-        inputs = self.tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
-        outputs = self.model.generate(**inputs, max_new_tokens=50)
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
 
     def triage(self, masked_text: str, skip_ai_draft: bool = False) -> TriageResult:
-        if not self._model_ready or self.model is None:
+        # Do NOT run LLM for seed/replay items or if no API keys are set
+        if skip_ai_draft or not (GEMINI_API_KEY or ANTHROPIC_API_KEY):
             return _rule_based_triage(masked_text, skip_ai_draft=skip_ai_draft)
 
         try:
-            # Category
-            cat_str = self._prompt_classify(
-                masked_text, "category",
-                [c.value for c in Category]
+            system_prompt = (
+                "You are an AI triage assistant for a bank's complaint system. "
+                "Classify the customer complaint text into Category, Severity, and Sentiment. "
+                "Extract the main key issue as a short sentence (max 100 characters), "
+                "and a list of key issues (max 3 issues). "
+                "Identify the language of the complaint (e.g. English, Hindi, Marathi, etc.). "
+                "Respond with a strict JSON object containing these exact keys.\n\n"
+                f"Allowed Categories: {[c.value for c in Category]}\n"
+                f"Allowed Severities: {[s.value for s in Severity]}\n"
+                f"Allowed Sentiments: {[s.value for s in Sentiment]}\n\n"
+                "Expected JSON format:\n"
+                "{\n"
+                "  \"category\": \"string\",\n"
+                "  \"severity\": \"string\",\n"
+                "  \"sentiment\": \"string\",\n"
+                "  \"key_issue\": \"string\",\n"
+                "  \"key_issues\": [\"string\"],\n"
+                "  \"confidence\": 0.95,\n"
+                "  \"detected_language\": \"string\"\n"
+                "}"
             )
-            category = next(
-                (c for c in Category if c.value.lower() in cat_str),
-                Category.GENERAL
-            )
+            fallback_val = {
+                "category": "general",
+                "severity": "medium",
+                "sentiment": "neutral",
+                "key_issue": masked_text[:120],
+                "key_issues": [masked_text[:120]],
+                "confidence": 0.75,
+                "detected_language": "English"
+            }
+            res = _claude_json(system_prompt, masked_text, fallback_val)
 
-            # Severity
-            sev_str = self._prompt_classify(
-                masked_text, "severity",
-                [s.value for s in Severity]
-            )
-            severity = next(
-                (s for s in Severity if s.value in sev_str),
-                Severity.MEDIUM
-            )
+            # Validate and coerce
+            category_str = res.get("category", "general").lower()
+            category = Category.GENERAL
+            for c in Category:
+                if c.value == category_str or c.value in category_str:
+                    category = c
+                    break
 
-            # Sentiment
-            sent_str = self._prompt_classify(
-                masked_text, "sentiment",
-                [s.value for s in Sentiment]
-            )
-            sentiment = next(
-                (s for s in Sentiment if s.value in sent_str),
-                Sentiment.NEUTRAL
-            )
+            severity_str = res.get("severity", "medium").lower()
+            severity = Severity.MEDIUM
+            for s in Severity:
+                if s.value == severity_str or s.value in severity_str:
+                    severity = s
+                    break
 
-            key_issue = self._extract_key_issue(masked_text)
+            sentiment_str = res.get("sentiment", "neutral").lower()
+            sentiment = Sentiment.NEUTRAL
+            for s in Sentiment:
+                if s.value == sentiment_str or s.value in sentiment_str:
+                    sentiment = s
+                    break
+
+            key_issue = res.get("key_issue", masked_text[:120])
+            key_issues = res.get("key_issues", [key_issue])
+            confidence = float(res.get("confidence", 0.88))
+            detected_language = res.get("detected_language", "English")
 
             import uuid
             fallback_response = RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES[Category.GENERAL]).format(
                 ref_id=str(uuid.uuid4())[:8].upper()
             )
-            if skip_ai_draft:
-                suggested_response = fallback_response
-            else:
-                suggested_response = generate_draft_response(masked_text, category, sentiment, severity, fallback_response)
+            suggested_response = generate_draft_response(
+                masked_text, category, sentiment, severity, fallback_response, detected_language
+            )
 
             return TriageResult(
                 category=category,
                 severity=severity,
                 sentiment=sentiment,
                 key_issue=key_issue,
-                key_issues=[key_issue],
+                key_issues=key_issues,
                 suggested_response=suggested_response,
-                confidence=0.88,
+                confidence=confidence,
+                detected_language=detected_language
             )
-
         except Exception as e:
-            logger.error(f"Model inference failed: {e}. Falling back to rules.")
+            logger.error(f"LLM triage failed: {e}. Falling back to rules.")
             return _rule_based_triage(masked_text, skip_ai_draft=skip_ai_draft)
+
 
 
 # Singleton

@@ -106,6 +106,7 @@ class TriageResult(BaseModel):
     key_issues: list[str] = Field(default_factory=list)
     suggested_response: str = ""
     confidence: float = 0.75
+    detected_language: str = "English"
 
 
 class DuplicateCluster(BaseModel):
@@ -169,6 +170,19 @@ class Complaint(BaseModel):
     resolved_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    tenant_id: str = "Union Bank"
+    rbi_status: str = "within"
+
+
+def compute_rbi_status(received_at: datetime, resolved_at: Optional[datetime] = None) -> str:
+    end_time = resolved_at or datetime.utcnow()
+    elapsed_days = (end_time - received_at).days
+    if elapsed_days <= 20:
+        return "within"
+    elif elapsed_days <= 30:
+        return "approaching"
+    else:
+        return "ombudsman_eligible"
 
 
 class ComplaintResponse(BaseModel):

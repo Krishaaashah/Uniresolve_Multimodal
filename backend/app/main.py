@@ -5,12 +5,14 @@ Main FastAPI application
 
 import asyncio
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from app.services.cbs import get_customer_profile
+from app.security import require_role
+
 
 from app.api.complaints import router as complaints_router
 from app.api.complaints import limiter
@@ -37,9 +39,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Api-Key", "Authorization"],
 )
+
 
 app.include_router(complaints_router)
 
@@ -52,9 +55,16 @@ async def _sla_monitor():
 
 @app.on_event("startup")
 async def startup_tasks():
+    # Pre-warm services at startup
+    from app.services.clustering import get_clustering_service
+    from app.services.triage import get_triage_service
+    get_clustering_service()
+    get_triage_service()
+
     from app.connectors.orchestrator import run_orchestrator
     asyncio.create_task(_sla_monitor())
     asyncio.create_task(run_orchestrator())
+
 
 
 @app.get("/", tags=["health"])
@@ -69,17 +79,44 @@ async def root():
 
 @app.get("/health", tags=["health"])
 async def health():
-    return {"status": "healthy", "model_ready": get_triage_service()._model_ready}
+    from app.services.clustering import get_clustering_service
+    from app.config import GEMINI_API_KEY
+    clustering_service = get_clustering_service()
+    dedup_healthy = clustering_service.healthy
+    encoder_ready = clustering_service.encoder is not None
+    
+    llm_reachable = False
+    if GEMINI_API_KEY:
+        try:
+            import httpx
+            # Query models endpoint to test Gemini API key reachability
+            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+            res = httpx.get(url, timeout=3.0)
+            if res.status_code == 200:
+                llm_reachable = True
+        except Exception:
+            llm_reachable = False
+            
+    return {
+        "status": "healthy",
+        "model_ready": get_triage_service()._model_ready,
+        "encoder_ready": encoder_ready,
+        "dedup_healthy": dedup_healthy,
+        "llm_reachable": llm_reachable
+    }
+
 
 
 @app.post("/admin/seed")
-async def reseed_demo():
+async def reseed_demo(current_user: dict = Depends(require_role(["admin"]))):
     try:
         from app.seed import main as seed_main
         seed_main()
+        get_store().log_audit(current_user["username"], current_user["role"], "reseed")
         return {"seeded": True, "message": "Demo data reset successfully."}
     except Exception as e:
         return {"seeded": False, "error": str(e)}
+
 
 
 @app.get("/customers/{customer_id}", tags=["cbs"])
