@@ -164,6 +164,7 @@ class Complaint(BaseModel):
     customer_id: Optional[str] = None
     transaction_id: Optional[str] = None
     source_ref: Optional[str] = None
+    summary: Optional[str] = None
     received_at: datetime = Field(default_factory=datetime.utcnow)
     triage: Optional[TriageResult] = None
     cluster: Optional[DuplicateCluster] = None

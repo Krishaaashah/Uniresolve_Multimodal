@@ -61,6 +61,8 @@ def build_complaint(raw, channel, category, severity, status, days_ago, sentimen
     if any(ord(c) >= 0x0900 and ord(c) <= 0x097F for c in raw):
         detected_lang = "Hindi"
 
+    from app.services.triage import generate_summary
+    summary_val = generate_summary(masked)
 
     complaint = Complaint(
         id=complaint_id,
@@ -70,6 +72,7 @@ def build_complaint(raw, channel, category, severity, status, days_ago, sentimen
         masked_text=masked,
         masked_fields=fields,
         customer_id=customer_id,
+        summary=summary_val,
         received_at=received_at,
         triage=TriageResult(
             category=category,

@@ -315,3 +315,58 @@ def get_triage_service() -> TriageService:
     if _triage_service is None:
         _triage_service = TriageService()
     return _triage_service
+
+
+def generate_summary(text: str) -> str:
+    # Rule-based fallback:
+    sentences = re.split(r"[.!?]", text.strip())
+    fallback = ". ".join(s.strip() for s in sentences[:2] if s.strip()) + "."
+    if len(fallback) > 150:
+        fallback = fallback[:147] + "..."
+
+    if not (GEMINI_API_KEY or ANTHROPIC_API_KEY):
+        return fallback
+
+    if GEMINI_API_KEY:
+        try:
+            import httpx
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{
+                    "parts": [{"text": (
+                        f"Complaint text: {text}\n\n"
+                        f"Summarize this complaint in 1 or 2 clear, direct sentences for a dashboard overview. "
+                        f"Do not include introductory phrasing, meta-commentary, or greetings. Just return the raw summary."
+                    )}]
+                }],
+                "generationConfig": {
+                    "maxOutputTokens": 100
+                }
+            }
+            res = httpx.post(url, json=payload, headers=headers, timeout=10.0)
+            if res.status_code == 200:
+                data = res.json()
+                summary_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                if summary_text:
+                    return summary_text
+        except Exception as e:
+            logger.warning(f"Gemini summary generation failed: {e}")
+
+    if ANTHROPIC_API_KEY:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            message = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=100,
+                system="Summarize the user complaint in 1-2 direct sentences. Avoid greetings or introductory remarks.",
+                messages=[{"role": "user", "content": text}],
+            )
+            summary_text = "".join(block.text for block in message.content if getattr(block, "type", "") == "text").strip()
+            return summary_text or fallback
+        except Exception as e:
+            logger.warning(f"Claude summary generation failed: {e}")
+            return fallback
+
+    return fallback

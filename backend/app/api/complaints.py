@@ -149,6 +149,8 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
         received_at=received_at,
         triage=triage_result,
     )
+    from app.services.triage import generate_summary
+    complaint.summary = generate_summary(masked_text)
     
     # Save the file using the complaint's unique ID to avoid namespace collisions
     if payload.media_file and payload.media_type:

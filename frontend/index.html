@@ -869,7 +869,7 @@ function complaintCard(c){
       <span class="ctime">${timeAgo(c.received_at)}</span>
     </div>
     ${t.key_issue?`<div class="ckey">${icon('search','sm')} ${cleanText(t.key_issue)}</div>`:''}
-    <div class="ctext">${cleanText(c.masked_text||'').substring(0,160)}${cleanText(c.masked_text||'').length>160?'...':''}</div>
+    <div class="ctext">${cleanText(c.summary || c.masked_text || '').substring(0,160)}${cleanText(c.summary || c.masked_text || '').length>160?'...':''}</div>
     <div class="cbot">
       <span class="with-icon" style="font-size:12px;color:var(--muted)">${icon('folder','sm')} ${t.category||'General'}</span>
       <div style="display:flex;gap:7px">
@@ -1465,6 +1465,11 @@ function renderOverview(c){
         ${icon('alert','sm')} SYSTEMIC ALERT - ${c.cluster.cluster_size} similar complaints. Possible regional outage.
       </div>`:''
     }
+    <div style="margin-bottom:14px;background:#f0f4f8;border:1px solid #d0daf0;border-radius:10px;padding:14px;font-size:13.5px;line-height:1.6">
+      <strong style="color:#003087;display:flex;align-items:center;gap:6px;margin-bottom:4px">${icon('bot','sm')} AI Summary</strong>
+      <div style="color:#2d3748">${cleanText(c.summary || 'Summary not generated.')}</div>
+    </div>
+
     <div style="margin-bottom:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
         <label style="font-size:11px;color:var(--muted);text-transform:uppercase;display:block">Complaint Text</label>
