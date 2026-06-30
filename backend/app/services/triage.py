@@ -76,9 +76,11 @@ def _rule_based_triage(text: str, skip_ai_draft: bool = False, transaction_note:
 
     # Severity
     severity = Severity.MEDIUM
+    severity_reason = "Classified as medium by default rule-based mapping."
     for sev, keywords in SEVERITY_KEYWORDS.items():
         if any(kw in lower for kw in keywords):
             severity = sev
+            severity_reason = f"Classified as {sev.value} based on keyword match."
             break
 
     # Sentiment
@@ -111,7 +113,8 @@ def _rule_based_triage(text: str, skip_ai_draft: bool = False, transaction_note:
         key_issues=[key_issue],
         suggested_response=suggested_response,
         confidence=0.75,
-        detected_language="English"
+        detected_language="English",
+        severity_reason=severity_reason
     )
 
 
@@ -212,10 +215,16 @@ class TriageService:
         try:
             system_prompt = (
                 "You are an AI triage assistant for a bank's complaint system. "
-                "Classify the customer complaint text into Category, Severity, and Sentiment. "
+                "Classify the customer complaint text into Category, Severity, and Sentiment.\n"
+                "To determine the Severity, enforce these guidelines:\n"
+                " - critical: Fraud, theft, data breaches, or loss of large sums (> Rs. 10,000)\n"
+                " - high: Login issues, failed transactions where money was debited, blocked cards, or EMI double deduction\n"
+                " - medium: ATM swallowing card, KYC delays, app bugs, and general account updates\n"
+                " - low: General queries, interest rate requests, branch feedback\n\n"
                 "Extract the main key issue as a short sentence (max 100 characters), "
                 "and a list of key issues (max 3 issues). "
-                "Identify the language of the complaint (e.g. English, Hindi, Marathi, etc.). "
+                "Identify the language of the complaint (e.g. English, Hindi, Marathi, etc.).\n"
+                "Provide a brief 'severity_reason' explaining your severity classification choice (max 150 characters).\n"
                 "Respond with a strict JSON object containing these exact keys.\n\n"
                 f"Allowed Categories: {[c.value for c in Category]}\n"
                 f"Allowed Severities: {[s.value for s in Severity]}\n"
@@ -228,7 +237,8 @@ class TriageService:
                 "  \"key_issue\": \"string\",\n"
                 "  \"key_issues\": [\"string\"],\n"
                 "  \"confidence\": 0.95,\n"
-                "  \"detected_language\": \"string\"\n"
+                "  \"detected_language\": \"string\",\n"
+                "  \"severity_reason\": \"string\"\n"
                 "}"
             )
             fallback_val = {
@@ -238,7 +248,8 @@ class TriageService:
                 "key_issue": masked_text[:120],
                 "key_issues": [masked_text[:120]],
                 "confidence": 0.75,
-                "detected_language": "English"
+                "detected_language": "English",
+                "severity_reason": "Fallback default medium triage classification."
             }
             res = _claude_json(system_prompt, masked_text, fallback_val)
 
@@ -268,6 +279,7 @@ class TriageService:
             key_issues = res.get("key_issues", [key_issue])
             confidence = float(res.get("confidence", 0.88))
             detected_language = res.get("detected_language", "English")
+            severity_reason = res.get("severity_reason", "Classified via LLM triage engine.")
 
             import uuid
             fallback_response = RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES[Category.GENERAL]).format(
@@ -285,7 +297,8 @@ class TriageService:
                 key_issues=key_issues,
                 suggested_response=suggested_response,
                 confidence=confidence,
-                detected_language=detected_language
+                detected_language=detected_language,
+                severity_reason=severity_reason
             )
         except Exception as e:
             logger.error(f"LLM triage failed: {e}. Falling back to rules.")

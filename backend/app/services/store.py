@@ -85,6 +85,7 @@ class ComplaintStore:
                     duplicate_of TEXT,
                     cluster_id TEXT,
                     duplicate_reason TEXT,
+                    severity_reason TEXT,
                     created_at TEXT,
                     updated_at TEXT,
                     resolved_at TEXT,
@@ -111,6 +112,10 @@ class ComplaintStore:
                 pass
             try:
                 conn.execute("ALTER TABLE complaints ADD COLUMN duplicate_reason TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE complaints ADD COLUMN severity_reason TEXT")
             except sqlite3.OperationalError:
                 pass
             try:
@@ -198,6 +203,11 @@ class ComplaintStore:
         except Exception:
             tenant_id = "Union Bank"
 
+        try:
+            sev_reason = row["severity_reason"]
+        except Exception:
+            sev_reason = None
+
         triage = TriageResult(
             category=Category(row["category"] or "general"),
             severity=severity,
@@ -206,7 +216,8 @@ class ComplaintStore:
             key_issues=key_issues,
             suggested_response=row["draft_response"] or "",
             confidence=float(row["confidence"] or 0.75),
-            detected_language=detected_lang
+            detected_language=detected_lang,
+            severity_reason=sev_reason
         )
         try:
             dup_reason = row["duplicate_reason"]
@@ -278,11 +289,11 @@ class ComplaintStore:
                     id, channel, channel_metadata, complaint_text, masked_text, masked_fields,
                     category, severity, sentiment, key_issues, draft_response, status,
                     assigned_agent, sla_deadline, sla_breached, duplicate_of, cluster_id,
-                    duplicate_reason, created_at, updated_at, resolved_at, customer_id, transaction_id, source_ref, received_at,
+                    duplicate_reason, severity_reason, created_at, updated_at, resolved_at, customer_id, transaction_id, source_ref, received_at,
                     confidence, cluster_size, systemic_alert, escalation_level,
                     escalation_history, communication_history, agent_note,
                     detected_language, tenant_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     complaint.id,
@@ -303,6 +314,7 @@ class ComplaintStore:
                     complaint.cluster.duplicate_of if complaint.cluster else None,
                     complaint.cluster.cluster_id if complaint.cluster else None,
                     complaint.cluster.duplicate_reason if complaint.cluster else None,
+                    complaint.triage.severity_reason if complaint.triage else None,
                     complaint.created_at.isoformat(),
                     complaint.updated_at.isoformat(),
                     complaint.resolved_at.isoformat() if complaint.resolved_at else None,

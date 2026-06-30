@@ -113,6 +113,7 @@ class TriageResult(BaseModel):
     suggested_response: str = ""
     confidence: float = 0.75
     detected_language: str = "English"
+    severity_reason: Optional[str] = None
 
 
 class DuplicateCluster(BaseModel):

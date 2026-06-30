@@ -1439,7 +1439,7 @@ function renderOverview(c){
       <div class="iblk"><label>Status</label><p><span class="pill st-${c.status}">${(c.status||'').replace('_',' ')}</span></p></div>
       <div class="iblk"><label>Escalation Level</label><p>${c.escalation_level||'L1 Agent'}</p></div>
       <div class="iblk"><label>Category</label><p class="with-icon">${icon('folder','sm')} ${t.category||'-'}</p></div>
-      <div class="iblk"><label>Severity</label><p><span class="pill ${t.severity||'medium'}">${t.severity||'-'}</span></p></div>
+      <div class="iblk"><label>Severity</label><p style="display:flex;align-items:center;gap:6px"><span class="pill ${t.severity||'medium'}">${t.severity||'-'}</span> <span style="font-size:11px;color:var(--muted);font-style:italic" title="${cleanText(t.severity_reason || '')}">${cleanText(t.severity_reason || 'Classified automatically.')}</span></p></div>
       <div class="iblk"><label>Sentiment</label><p><span class="pill ${t.sentiment||'neutral'}">${t.sentiment||'-'}</span></p></div>
       <div class="iblk"><label>Received</label><p>${fmtDt(c.received_at)}</p></div>
       <div class="iblk"><label>Cluster</label><p>${
