@@ -134,7 +134,13 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
     is_replay = payload.source_ref and payload.source_ref.startswith("replay-")
     skip_ai_draft = is_seed or is_replay
 
-    triage_result = get_triage_service().triage(masked_text, skip_ai_draft=skip_ai_draft, transaction_note=tx_note)
+    triage_result = get_triage_service().triage(
+        masked_text,
+        skip_ai_draft=skip_ai_draft,
+        transaction_note=tx_note,
+        customer_id=payload.customer_id,
+        transaction_id=payload.transaction_id
+    )
     received_at = payload.received_at or datetime.utcnow()
     
     complaint = Complaint(

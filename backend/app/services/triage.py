@@ -63,7 +63,13 @@ RESPONSE_TEMPLATES = {
 }
 
 
-def _rule_based_triage(text: str, skip_ai_draft: bool = False, transaction_note: Optional[str] = None) -> TriageResult:
+def _rule_based_triage(
+    text: str,
+    skip_ai_draft: bool = False,
+    transaction_note: Optional[str] = None,
+    customer_id: Optional[str] = None,
+    transaction_id: Optional[str] = None
+) -> TriageResult:
     """Deterministic fallback when the ML model is not loaded."""
     lower = text.lower()
 
@@ -102,7 +108,8 @@ def _rule_based_triage(text: str, skip_ai_draft: bool = False, transaction_note:
         suggested_response = fallback_response
     else:
         suggested_response = generate_draft_response(
-            text, category, sentiment, severity, fallback_response, "English", transaction_note=transaction_note
+            text, category, sentiment, severity, fallback_response, "English",
+            transaction_note=transaction_note, customer_id=customer_id, transaction_id=transaction_id
         )
 
     return TriageResult(
@@ -125,42 +132,154 @@ def generate_draft_response(
     severity,
     fallback: str = "",
     detected_language: str = "English",
-    transaction_note: Optional[str] = None
+    transaction_note: Optional[str] = None,
+    customer_id: Optional[str] = None,
+    transaction_id: Optional[str] = None
 ) -> str:
+    # Run tools locally to get offline context/fallback
+    local_details = []
+    if transaction_id:
+        from app.services.store import get_store
+        tx = get_store().get_transaction(transaction_id)
+        if tx:
+            local_details.append(f"Transaction {transaction_id} Details: Status is {tx.get('status')}, amount is {tx.get('amount')}, date is {tx.get('created_at')}.")
+    if customer_id:
+        from app.services.store import get_store
+        txs = get_store().get_transactions_for_customer(customer_id)
+        if txs:
+            local_details.append(f"Customer {customer_id} Transactions: {txs}")
+    
+    if local_details:
+        local_context = "\n".join(local_details)
+        if not transaction_note:
+            transaction_note = local_context
+        else:
+            transaction_note = f"{transaction_note}\n{local_context}"
+
     if GEMINI_API_KEY:
         try:
             import httpx
-            # Call Gemini API
+            tools = [{
+                "functionDeclarations": [
+                    {
+                        "name": "check_transaction_status",
+                        "description": "Retrieve the current status, amount, and timestamp of a specific transaction by transaction_id.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "transaction_id": {
+                                    "type": "STRING",
+                                    "description": "The unique transaction identifier, e.g. TXN-HIN1-F1."
+                                }
+                            },
+                            "required": ["transaction_id"]
+                        }
+                    },
+                    {
+                        "name": "get_customer_transactions",
+                        "description": "Retrieve all transaction records associated with a specific customer_id.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "customer_id": {
+                                    "type": "STRING",
+                                    "description": "The unique customer identifier, e.g. CUST-10245."
+                                }
+                            },
+                            "required": ["customer_id"]
+                        }
+                    }
+                ]
+            }]
+
+            prompt_text = (
+                f"Complaint: {complaint_text}\n"
+                f"Category: {getattr(category, 'value', category)}\n"
+                f"Sentiment: {getattr(sentiment, 'value', sentiment)}\n"
+                f"Severity: {getattr(severity, 'value', severity)}\n"
+                f"Customer ID: {customer_id or 'unknown'}\n"
+                f"Linked Transaction ID: {transaction_id or 'unknown'}\n\n"
+                "You are a professional customer service agent. You have access to tools to lookup customer transactions or transaction status. "
+                "If a customer customer_id or transaction_id is provided, invoke the appropriate tools to retrieve live context before replying. "
+                "After you receive tool responses, incorporate the transaction details (amounts, date, status) in your reply draft. "
+                f"Write the final customer response empathetically, concisely, and in the language: {detected_language}. Max 3 sentences."
+            )
+
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
             headers = {"Content-Type": "application/json"}
+            
+            # Send initial message with tools
+            contents = [{
+                "role": "user",
+                "parts": [{"text": prompt_text}]
+            }]
             payload = {
-                "contents": [{
-                    "parts": [{"text": (
-                        f"Complaint: {complaint_text}\n"
-                        f"Category: {getattr(category, 'value', category)}\n"
-                        f"Sentiment: {getattr(sentiment, 'value', sentiment)}\n"
-                        f"Severity: {getattr(severity, 'value', severity)}\n"
-                        + (f"Transaction Status Context: {transaction_note}\n" if transaction_note else "") +
-                        f"\nWrite a professional customer service response for a financial institution. "
-                        + (f"Incorporate the transaction status context in the response if applicable. " if transaction_note else "") +
-                        f"The customer's language is {detected_language}. Write the response in {detected_language}. "
-                        f"Write empathetically and concisely. Do not make up policy details. Max 3 sentences."
-                    )}]
-                }],
-                "generationConfig": {
-                    "maxOutputTokens": 180
-                }
+                "contents": contents,
+                "tools": tools,
+                "generationConfig": {"maxOutputTokens": 300}
             }
-            res = httpx.post(url, json=payload, headers=headers, timeout=10.0)
+
+            res = httpx.post(url, json=payload, headers=headers, timeout=15.0)
             if res.status_code == 200:
                 data = res.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                if text:
-                    return text
+                candidate = data["candidates"][0]
+                content = candidate.get("content", {})
+                parts = content.get("parts", [])
+                
+                # Check for tool call requests
+                function_calls = [p["functionCall"] for p in parts if "functionCall" in p]
+                if function_calls:
+                    # Model requested a tool call!
+                    contents.append(content)
+                    response_parts = []
+                    
+                    for call in function_calls:
+                        name = call["name"]
+                        args = call["args"]
+                        result = {}
+                        if name == "check_transaction_status":
+                            tx_id = args.get("transaction_id")
+                            if tx_id:
+                                from app.services.store import get_store
+                                tx = get_store().get_transaction(tx_id)
+                                result = tx or {"error": f"Transaction {tx_id} not found"}
+                        elif name == "get_customer_transactions":
+                            c_id = args.get("customer_id")
+                            if c_id:
+                                from app.services.store import get_store
+                                result = get_store().get_transactions_for_customer(c_id)
+                        
+                        response_parts.append({
+                            "functionResponse": {
+                                "name": name,
+                                "response": {"output": result}
+                            }
+                        })
+                    
+                    contents.append({
+                        "role": "user",
+                        "parts": response_parts
+                    })
+                    
+                    payload = {
+                        "contents": contents,
+                        "tools": tools,
+                        "generationConfig": {"maxOutputTokens": 300}
+                    }
+                    res2 = httpx.post(url, json=payload, headers=headers, timeout=15.0)
+                    if res2.status_code == 200:
+                        data2 = res2.json()
+                        text = data2["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        if text:
+                            return text
+                else:
+                    text = parts[0]["text"].strip()
+                    if text:
+                        return text
             else:
-                logger.warning(f"Gemini API returned status {res.status_code}: {res.text}")
+                logger.warning(f"Gemini tool call initiation returned: {res.status_code}")
         except Exception as e:
-            logger.warning(f"Gemini draft generation failed: {e}. Falling back.")
+            logger.warning(f"Gemini tool calling failed: {e}. Falling back.")
 
     if ANTHROPIC_API_KEY:
         try:
@@ -207,10 +326,21 @@ class TriageService:
         self._model_ready = True
 
 
-    def triage(self, masked_text: str, skip_ai_draft: bool = False, transaction_note: Optional[str] = None) -> TriageResult:
+    def triage(
+        self,
+        masked_text: str,
+        skip_ai_draft: bool = False,
+        transaction_note: Optional[str] = None,
+        customer_id: Optional[str] = None,
+        transaction_id: Optional[str] = None
+    ) -> TriageResult:
         # Do NOT run LLM for seed/replay items or if no API keys are set
         if skip_ai_draft or not (GEMINI_API_KEY or ANTHROPIC_API_KEY):
-            return _rule_based_triage(masked_text, skip_ai_draft=skip_ai_draft, transaction_note=transaction_note)
+            return _rule_based_triage(
+                masked_text, skip_ai_draft=skip_ai_draft,
+                transaction_note=transaction_note,
+                customer_id=customer_id, transaction_id=transaction_id
+            )
 
         try:
             system_prompt = (
@@ -286,7 +416,8 @@ class TriageService:
                 ref_id=str(uuid.uuid4())[:8].upper()
             )
             suggested_response = generate_draft_response(
-                masked_text, category, sentiment, severity, fallback_response, detected_language, transaction_note=transaction_note
+                masked_text, category, sentiment, severity, fallback_response, detected_language,
+                transaction_note=transaction_note, customer_id=customer_id, transaction_id=transaction_id
             )
 
             return TriageResult(
@@ -302,7 +433,11 @@ class TriageService:
             )
         except Exception as e:
             logger.error(f"LLM triage failed: {e}. Falling back to rules.")
-            return _rule_based_triage(masked_text, skip_ai_draft=skip_ai_draft, transaction_note=transaction_note)
+            return _rule_based_triage(
+                masked_text, skip_ai_draft=skip_ai_draft,
+                transaction_note=transaction_note,
+                customer_id=customer_id, transaction_id=transaction_id
+            )
 
 
 
