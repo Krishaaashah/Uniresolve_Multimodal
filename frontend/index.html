@@ -552,7 +552,7 @@ const DEMO_POOL = [
   {channel:'ivr', text:'Recurring payment to utility company failed silently. Got disconnection notice.'},
   {channel:'email', text:'Joint account holder addition rejected without explanation after 2 week wait.'},
 ];
-let ALL = [], STATS = {}, ALERTS = [], TREND = null, currentView = 'dashboard', activeFilter = 'all';
+let ALL = [], STATS = {}, ALERTS = [], TREND = null, currentView = 'dashboard', activeFilter = 'all', GROUPS = [], viewMode = 'single';
 let SEARCH_QUERY = '';
 let liveMode = false;
 let liveInterval = null;
@@ -608,6 +608,7 @@ async function loadAll(){
   try{ STATS = await apiFetch('/complaints/stats'); }catch{ STATS = mockStats(); }
   try{ ALERTS = (await apiFetch('/complaints/alerts')).alerts || []; }catch{ ALERTS = ALL.filter(c=>c.cluster?.systemic_alert); }
   try{ TREND = await apiFetch('/complaints/trends?group_by=category&window=7d'); }catch{ TREND = null; }
+  try{ GROUPS = await apiFetch('/complaints/groups'); }catch{ GROUPS = buildMockGroups(ALL); }
   document.getElementById('alertBadge').style.display =
     ALERTS.length > 0 ? 'flex' : 'none';
   document.getElementById('slaBreachBadge').style.display =
@@ -902,6 +903,163 @@ function complaintCard(c){
   </div>`;
 }
 
+function setViewMode(mode) {
+  viewMode = mode;
+  render();
+}
+
+function toggleGroupDetails(id, event) {
+  event.stopPropagation();
+  const el = document.getElementById(id);
+  if (!el) return;
+  const isHidden = el.style.display === 'none';
+  el.style.display = isHidden ? 'block' : 'none';
+  
+  const card = el.closest('.ccard');
+  const span = card.querySelector('.cbot span:last-child');
+  if (span) {
+    span.innerHTML = isHidden 
+      ? `${icon('arrow-up','sm')} Hide details` 
+      : `${icon('arrow-down','sm')} View details`;
+  }
+}
+
+function buildMockGroups(complaints) {
+  const exact = {};
+  const semantic = {};
+  const singletons = [];
+  
+  complaints.forEach(c => {
+    if (!c.customer_id) {
+      singletons.push(c);
+      return;
+    }
+    if (c.transaction_id) {
+      const key = `${c.customer_id}|${c.transaction_id}`;
+      if (!exact[key]) exact[key] = [];
+      exact[key].push(c);
+    } else {
+      const cl_id = c.cluster && c.cluster.cluster_id;
+      if (cl_id) {
+        const key = `${c.customer_id}|${cl_id}`;
+        if (!semantic[key]) semantic[key] = [];
+        semantic[key].push(c);
+      } else {
+        singletons.push(c);
+      }
+    }
+  });
+  
+  const groups = [];
+  
+  Object.keys(exact).forEach(key => {
+    const list = exact[key];
+    list.sort((a,b)=>new Date(a.received_at)-new Date(b.received_at));
+    const first = list[0].received_at;
+    const last = list[list.length-1].received_at;
+    const channels = [...new Set(list.map(x => x.channel.charAt(0).toUpperCase() + x.channel.slice(1)))];
+    const parts = key.split('|');
+    groups.push({
+      group_id: `grp_exact_${parts[0]}_${parts[1]}`,
+      customer_id: parts[0],
+      transaction_id: parts[1],
+      count: list.length,
+      channels: channels,
+      first_raised: first,
+      last_raised: last,
+      tickets: list.map(x => ({id: x.id, channel: x.channel.charAt(0).toUpperCase() + x.channel.slice(1), timestamp: x.received_at})),
+      grouping_reason: `Same customer + same transaction ${parts[1]}`
+    });
+  });
+  
+  Object.keys(semantic).forEach(key => {
+    const list = semantic[key];
+    list.sort((a,b)=>new Date(a.received_at)-new Date(b.received_at));
+    const first = list[0].received_at;
+    const last = list[list.length-1].received_at;
+    const channels = [...new Set(list.map(x => x.channel.charAt(0).toUpperCase() + x.channel.slice(1)))];
+    const parts = key.split('|');
+    groups.push({
+      group_id: `grp_semantic_${parts[0]}_${parts[1]}`,
+      customer_id: parts[0],
+      transaction_id: null,
+      count: list.length,
+      channels: channels,
+      first_raised: first,
+      last_raised: last,
+      tickets: list.map(x => ({id: x.id, channel: x.channel.charAt(0).toUpperCase() + x.channel.slice(1), timestamp: x.received_at})),
+      grouping_reason: `Same customer, semantically similar issue`
+    });
+  });
+  
+  singletons.forEach(c => {
+    groups.push({
+      group_id: `grp_single_${c.id}`,
+      customer_id: c.customer_id,
+      transaction_id: c.transaction_id,
+      count: 1,
+      channels: [c.channel.charAt(0).toUpperCase() + c.channel.slice(1)],
+      first_raised: c.received_at,
+      last_raised: c.received_at,
+      tickets: [{id: c.id, channel: c.channel.charAt(0).toUpperCase() + c.channel.slice(1), timestamp: c.received_at}],
+      grouping_reason: `Single isolated complaint`
+    });
+  });
+  
+  groups.sort((a,b) => (b.count > 1 ? 1 : 0) - (a.count > 1 ? 1 : 0) || new Date(b.last_raised) - new Date(a.last_raised));
+  return groups;
+}
+
+function groupedCard(g){
+  const chanIcons = g.channels.map(c => {
+    const iconName = CHANNELS[c.toLowerCase()]?.icon || 'list';
+    return `<span class="with-icon" title="${c}" style="font-size:12px;margin-right:8px">${icon(iconName, 'sm')} ${c}</span>`;
+  }).join('');
+  
+  const repId = g.tickets[0].id;
+  const repComplaint = ALL.find(c => c.id === repId);
+  const repText = repComplaint ? (repComplaint.summary || repComplaint.masked_text || '') : 'Grouped Tickets';
+  const category = repComplaint && repComplaint.triage ? repComplaint.triage.category : 'General';
+  const detailId = `grp_det_${g.group_id}`;
+  
+  return `<div class="ccard" style="border-left: 4px solid var(--blue); position: relative" onclick="toggleGroupDetails('${detailId}', event)">
+    <div class="ctop">
+      <div class="cmeta">
+        <span class="pill critical" style="background:rgba(49,130,206,0.1);color:var(--blue);font-weight:700">Raised ${g.count}×</span>
+        ${g.customer_id ? `<span class="pill" style="background:#edf2f7;color:#4a5568">Customer: ${g.customer_id}</span>` : ''}
+        ${g.transaction_id ? `<span class="pill" style="background:#eebcde;color:#b83280">Tx: ${g.transaction_id}</span>` : ''}
+      </div>
+      <span class="ctime">Last active ${timeAgo(g.last_raised)}</span>
+    </div>
+    <div class="ctext" style="margin-top:10px">${cleanText(repText).substring(0,160)}${cleanText(repText).length>160?'...':''}</div>
+    
+    <div id="${detailId}" style="display:none; margin: 12px 0; padding: 12px; background: #f7fafc; border: 1px solid var(--border); border-radius: 8px">
+      <div style="font-weight:700; font-size:12.5px; color: var(--blue); margin-bottom:8px">Grouping Diagnosis (Explainability):</div>
+      <div style="font-size:13px; margin-bottom:12px; color: var(--text)"><strong>Reason:</strong> ${g.grouping_reason}</div>
+      <div style="font-weight:700; font-size:12px; color: var(--muted); margin-bottom:6px">Member Tickets:</div>
+      <div style="display:flex; flex-direction:column; gap:6px">
+        ${g.tickets.map((t, idx) => `
+          <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; padding:6px; background:#fff; border-radius:6px; border:1px solid #edf2f7">
+            <span>Ticket #${idx+1} (${t.channel})</span>
+            <span style="color:var(--muted); display:flex; gap:8px; align-items:center">
+              ${fmtDt(t.timestamp)}
+              <button onclick="event.stopPropagation(); openDetail('${t.id}')" style="background:none; border:none; color:var(--blue); font-weight:700; cursor:pointer; padding:2px 4px">Open Ticket →</button>
+            </span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="cbot" style="margin-top:10px">
+      <span class="with-icon" style="font-size:12px;color:var(--muted)">${icon('folder','sm')} ${category}</span>
+      <div style="display:flex;gap:7px;align-items:center">
+        ${chanIcons}
+        <span style="font-size:12px; color:var(--blue); font-weight:700; cursor:pointer" class="with-icon">${icon('arrow-down','sm')} View details</span>
+      </div>
+    </div>
+  </div>`;
+}
+
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
 function renderDashboard(){
   const s = STATS;
@@ -1000,21 +1158,37 @@ async function renderComplaints(){
   }
   const filtered = activeFilter==='all'?source:source.filter(c=>c.status===activeFilter);
   const sorted = [...filtered].sort((a,b)=>new Date(b.received_at)-new Date(a.received_at));
+  
+  // Calculate group count for display
+  let grpsCount = 0;
+  try {
+    grpsCount = buildMockGroups(sorted).length;
+  } catch(e) {}
+
   document.getElementById('viewRoot').innerHTML = `
     <div class="sec-hdr">
       <h2 class="with-icon">${icon('list')} All Complaints (${sorted.length})</h2>
       <button class="add-btn" onclick="openIngest()">${icon('plus','sm')} New</button>
     </div>
-    <div style="margin-bottom:12px">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px">
       <input id="searchInput" value="${SEARCH_QUERY.replace(/"/g,'&quot;')}" oninput="setSearch(this.value)"
         placeholder="Search by keyword, category or channel..."
-        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:13.5px;outline:none">
+        style="flex:1; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:13.5px; outline:none">
+      <div style="display:flex; background:rgba(0,0,0,0.05); padding:3px; border-radius:8px">
+        <button onclick="setViewMode('single')" style="border:none; background:${viewMode==='single'?'#fff':'none'}; color:${viewMode==='single'?'var(--blue)':'var(--muted)'}; padding:6px 12px; font-size:12.5px; font-weight:700; border-radius:6px; cursor:pointer; box-shadow:${viewMode==='single'?'0 1px 3px rgba(0,0,0,0.1)':'none'}">Individual</button>
+        <button onclick="setViewMode('grouped')" style="border:none; background:${viewMode==='grouped'?'#fff':'none'}; color:${viewMode==='grouped'?'var(--blue)':'var(--muted)'}; padding:6px 12px; font-size:12.5px; font-weight:700; border-radius:6px; cursor:pointer; box-shadow:${viewMode==='grouped'?'0 1px 3px rgba(0,0,0,0.1)':'none'}">Grouped (${grpsCount})</button>
+      </div>
     </div>
     <div class="filters" style="margin-bottom:16px">
       ${filters.map(f=>`<button class="fbtn ${activeFilter===f?'active':''}"
         onclick="setFilter('${f}')">${f.replace('_',' ').replace(/\b\w/g,x=>x.toUpperCase())}</button>`).join('')}
     </div>
-    <div class="clist">${sorted.map(complaintCard).join('') || '<div class="loading">No complaints found.</div>'}</div>
+    <div class="clist">
+      ${viewMode === 'grouped'
+        ? (buildMockGroups(sorted).map(groupedCard).join('') || '<div class="loading">No complaint groups found.</div>')
+        : (sorted.map(complaintCard).join('') || '<div class="loading">No complaints found.</div>')
+      }
+    </div>
   `;
 }
 function setFilter(f){ activeFilter=f; renderComplaints(); }

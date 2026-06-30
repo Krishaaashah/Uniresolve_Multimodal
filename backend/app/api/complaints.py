@@ -227,6 +227,127 @@ async def get_alerts(current_user: dict = Depends(get_current_user)):
     return {"alerts": alerts, "count": len(alerts)}
 
 
+@router.get("/groups")
+async def get_complaint_groups(current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    tenant = current_user.get("tenant_id", "Union Bank")
+    complaints = store.all()
+    if tenant:
+        complaints = [c for c in complaints if c.tenant_id == tenant]
+
+    exact_map = defaultdict(list)
+    semantic_map = defaultdict(list)
+    singletons = []
+
+    for c in complaints:
+        if not c.customer_id:
+            singletons.append(c)
+            continue
+        if c.transaction_id:
+            key = (c.customer_id, c.transaction_id)
+            exact_map[key].append(c)
+        else:
+            cluster_id = c.cluster.cluster_id if (c.cluster and c.cluster.cluster_id) else None
+            if cluster_id:
+                key = (c.customer_id, cluster_id)
+                semantic_map[key].append(c)
+            else:
+                singletons.append(c)
+
+    groups = []
+
+    # Exact groups
+    for (cust_id, tx_id), member_tickets in exact_map.items():
+        member_tickets.sort(key=lambda x: x.received_at)
+        first_raised = member_tickets[0].received_at.isoformat()
+        last_raised = member_tickets[-1].received_at.isoformat()
+        channels = list(dict.fromkeys(c.channel.value.title() for c in member_tickets))
+        
+        if len(member_tickets) > 1:
+            reason = f"Same customer + same transaction {tx_id}"
+        else:
+            reason = f"Customer exact issue with transaction {tx_id}"
+            
+        group_id = f"grp_exact_{cust_id}_{tx_id}"
+        groups.append({
+            "group_id": group_id,
+            "customer_id": cust_id,
+            "transaction_id": tx_id,
+            "count": len(member_tickets),
+            "channels": channels,
+            "first_raised": first_raised,
+            "last_raised": last_raised,
+            "tickets": [
+                {
+                    "id": c.id,
+                    "channel": c.channel.value.title(),
+                    "timestamp": c.received_at.isoformat()
+                }
+                for c in member_tickets
+            ],
+            "grouping_reason": reason
+        })
+
+    # Semantic groups
+    for (cust_id, cl_id), member_tickets in semantic_map.items():
+        member_tickets.sort(key=lambda x: x.received_at)
+        first_raised = member_tickets[0].received_at.isoformat()
+        last_raised = member_tickets[-1].received_at.isoformat()
+        channels = list(dict.fromkeys(c.channel.value.title() for c in member_tickets))
+        
+        if len(member_tickets) > 1:
+            reason = "Same customer, semantically similar issue (cosine > 0.80)"
+        else:
+            reason = "Customer unique issue (no matching transactions or semantic duplicates)"
+            
+        group_id = f"grp_semantic_{cust_id}_{cl_id}"
+        groups.append({
+            "group_id": group_id,
+            "customer_id": cust_id,
+            "transaction_id": None,
+            "count": len(member_tickets),
+            "channels": channels,
+            "first_raised": first_raised,
+            "last_raised": last_raised,
+            "tickets": [
+                {
+                    "id": c.id,
+                    "channel": c.channel.value.title(),
+                    "timestamp": c.received_at.isoformat()
+                }
+                for c in member_tickets
+            ],
+            "grouping_reason": reason
+        })
+
+    # Singletons
+    for c in singletons:
+        channels = [c.channel.value.title()]
+        first_raised = c.received_at.isoformat()
+        last_raised = c.received_at.isoformat()
+        groups.append({
+            "group_id": f"grp_single_{c.id}",
+            "customer_id": c.customer_id,
+            "transaction_id": c.transaction_id,
+            "count": 1,
+            "channels": channels,
+            "first_raised": first_raised,
+            "last_raised": last_raised,
+            "tickets": [
+                {
+                    "id": c.id,
+                    "channel": c.channel.value.title(),
+                    "timestamp": c.received_at.isoformat()
+                }
+            ],
+            "grouping_reason": "Single isolated complaint"
+        })
+
+    # Sort groups so groups with multiple tickets or recent tickets come first
+    groups.sort(key=lambda x: (x["count"] > 1, x["last_raised"]), reverse=True)
+    return groups
+
+
 @router.get("/sla-breached", response_model=list[Complaint])
 async def sla_breached(current_user: dict = Depends(get_current_user)):
     tenant = current_user.get("tenant_id", "Union Bank")
