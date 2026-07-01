@@ -6,8 +6,8 @@ This project addresses **PS5: Unified Omnichannel Customer Grievance Ingestion a
 ## Live Demo
 Run locally using the instructions below.
 
-* Demo Video: [https://youtube.com/...] (Placeholder)
-* Live Web App: [Run locally using instructions below]
+* Demo Video: [https://youtu.be/V745RcMkF2Q](https://youtu.be/V745RcMkF2Q)
+* Live Web App: Run locally using instructions below
 
 ## Tech Stack
 * Python 3.11
