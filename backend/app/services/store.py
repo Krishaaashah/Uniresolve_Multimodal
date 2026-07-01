@@ -110,7 +110,9 @@ class ComplaintStore:
                     communication_history TEXT,
                     agent_note TEXT,
                     detected_language TEXT DEFAULT 'English',
-                    tenant_id TEXT DEFAULT 'Union Bank'
+                    tenant_id TEXT DEFAULT 'Union Bank',
+                    recurring INTEGER DEFAULT 0,
+                    recurring_of TEXT
                 )
             """))
 
@@ -124,6 +126,8 @@ class ComplaintStore:
                 "ALTER TABLE complaints ADD COLUMN tenant_id TEXT DEFAULT 'Union Bank'",
                 "ALTER TABLE complaints ADD COLUMN ticket_id TEXT",
                 "ALTER TABLE complaints ADD COLUMN parent_ticket_id TEXT",
+                "ALTER TABLE complaints ADD COLUMN recurring INTEGER DEFAULT 0",
+                "ALTER TABLE complaints ADD COLUMN recurring_of TEXT",
             ]
             for sql in _optional_cols:
                 try:
@@ -260,6 +264,16 @@ class ComplaintStore:
         except Exception:
             p_tkt_id = None
 
+        try:
+            rec_val = bool(row["recurring"])
+        except Exception:
+            rec_val = False
+
+        try:
+            rec_of_val = row["recurring_of"]
+        except Exception:
+            rec_of_val = None
+
         import random
 
         return Complaint(
@@ -291,7 +305,9 @@ class ComplaintStore:
             created_at=_dt(row["created_at"]) or received_at,
             updated_at=_dt(row["updated_at"]) or received_at,
             tenant_id=tenant_id,
-            rbi_status=compute_rbi_status(received_at, _dt(row["resolved_at"]))
+            rbi_status=compute_rbi_status(received_at, _dt(row["resolved_at"])),
+            recurring=rec_val,
+            recurring_of=rec_of_val
         )
 
 
@@ -328,14 +344,14 @@ class ComplaintStore:
                     duplicate_reason, severity_reason, summary, created_at, updated_at, resolved_at, customer_id, transaction_id, source_ref, received_at,
                     confidence, cluster_size, systemic_alert, escalation_level,
                     escalation_history, communication_history, agent_note,
-                    detected_language, tenant_id
+                    detected_language, tenant_id, recurring, recurring_of
                 ) VALUES (:id,:ticket_id,:parent_ticket_id,:channel,:channel_metadata,:complaint_text,:masked_text,:masked_fields,
                     :category,:severity,:sentiment,:key_issues,:draft_response,:status,
                     :assigned_agent,:sla_deadline,:sla_breached,:duplicate_of,:cluster_id,
                     :duplicate_reason,:severity_reason,:summary,:created_at,:updated_at,:resolved_at,:customer_id,:transaction_id,:source_ref,:received_at,
                     :confidence,:cluster_size,:systemic_alert,:escalation_level,
                     :escalation_history,:communication_history,:agent_note,
-                    :detected_language,:tenant_id)
+                    :detected_language,:tenant_id,:recurring,:recurring_of)
                 """)
             else:
                 upsert_sql = sa_text("""
@@ -346,14 +362,14 @@ class ComplaintStore:
                     duplicate_reason, severity_reason, summary, created_at, updated_at, resolved_at, customer_id, transaction_id, source_ref, received_at,
                     confidence, cluster_size, systemic_alert, escalation_level,
                     escalation_history, communication_history, agent_note,
-                    detected_language, tenant_id
+                    detected_language, tenant_id, recurring, recurring_of
                 ) VALUES (:id,:ticket_id,:parent_ticket_id,:channel,:channel_metadata,:complaint_text,:masked_text,:masked_fields,
                     :category,:severity,:sentiment,:key_issues,:draft_response,:status,
                     :assigned_agent,:sla_deadline,:sla_breached,:duplicate_of,:cluster_id,
                     :duplicate_reason,:severity_reason,:summary,:created_at,:updated_at,:resolved_at,:customer_id,:transaction_id,:source_ref,:received_at,
                     :confidence,:cluster_size,:systemic_alert,:escalation_level,
                     :escalation_history,:communication_history,:agent_note,
-                    :detected_language,:tenant_id)
+                    :detected_language,:tenant_id,:recurring,:recurring_of)
                 ON CONFLICT (id) DO UPDATE SET
                     parent_ticket_id=EXCLUDED.parent_ticket_id,
                     channel=EXCLUDED.channel, channel_metadata=EXCLUDED.channel_metadata,
@@ -373,7 +389,9 @@ class ComplaintStore:
                     escalation_history=EXCLUDED.escalation_history,
                     communication_history=EXCLUDED.communication_history,
                     agent_note=EXCLUDED.agent_note, detected_language=EXCLUDED.detected_language,
-                    tenant_id=EXCLUDED.tenant_id
+                    tenant_id=EXCLUDED.tenant_id,
+                    recurring=EXCLUDED.recurring,
+                    recurring_of=EXCLUDED.recurring_of
                 """)
             conn.execute(upsert_sql, {
                     "id": complaint.id,
@@ -414,18 +432,27 @@ class ComplaintStore:
                     "agent_note": complaint.agent_note,
                     "detected_language": complaint.triage.detected_language if complaint.triage else "English",
                     "tenant_id": complaint.tenant_id,
+                    "recurring": int(complaint.recurring),
+                    "recurring_of": complaint.recurring_of,
                 },
             )
             conn.commit()
 
             if complaint.cluster and complaint.cluster.cluster_id:
                 cl_id = complaint.cluster.cluster_id
-                cursor = conn.execute(
+                cursor_size = conn.execute(
                     sa_text("SELECT COUNT(DISTINCT id) FROM complaints WHERE cluster_id = :cl_id"),
                     {"cl_id": cl_id}
                 )
-                real_size = cursor.fetchone()[0]
-                is_systemic = int(real_size >= 5)
+                real_size = cursor_size.fetchone()[0]
+                
+                cursor_cust = conn.execute(
+                    sa_text("SELECT COUNT(DISTINCT customer_id) FROM complaints WHERE cluster_id = :cl_id AND customer_id IS NOT NULL AND customer_id != ''"),
+                    {"cl_id": cl_id}
+                )
+                distinct_customers = cursor_cust.fetchone()[0]
+                is_systemic = int(distinct_customers >= 5)
+                
                 conn.execute(
                     sa_text("""
                         UPDATE complaints
@@ -446,6 +473,14 @@ class ComplaintStore:
                 {"id": complaint_id}
             ).fetchone()
         return self._row_to_complaint(row) if row else None
+
+    def get_by_cluster(self, cluster_id: str) -> list[Complaint]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                sa_text("SELECT * FROM complaints WHERE cluster_id = :cluster_id"),
+                {"cluster_id": cluster_id}
+            ).fetchall()
+        return [self._row_to_complaint(row) for row in rows]
 
     def all(self) -> list[Complaint]:
         with self._connect() as conn:

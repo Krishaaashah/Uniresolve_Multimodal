@@ -98,17 +98,35 @@ class RawComplaintIn(BaseModel):
             return ""
         return value.strip()
 
+    @field_validator("customer_id")
+    @classmethod
+    def validate_customer_id(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return v
+        v = v.strip()
+        if not (v.isdigit() and len(v) == 8):
+            raise ValueError("Customer ID must be exactly an 8-digit number")
+        return v
+
+    @field_validator("transaction_id")
+    @classmethod
+    def validate_transaction_id(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return v
+        v = v.strip()
+        if not (v.isdigit() and len(v) == 12):
+            raise ValueError("Transaction ID must be exactly a 12-digit number")
+        return v
+
     @model_validator(mode="after")
     def validate_content_present(self) -> RawComplaintIn:
         if not self.raw_text and not self.media_file:
             raise ValueError("Either raw_text (complaint_text) or media_file must be provided.")
-        # Manual submissions require both customer_id and transaction_id
         is_seed = self.channel_metadata.get("seed") is True
         is_replay = self.source_ref and self.source_ref.startswith("replay-")
         if not (is_seed or is_replay):
-            if not self.media_file:
-                if not self.customer_id or not self.transaction_id:
-                    raise ValueError("Customer ID and Transaction ID are both required")
+            if not self.customer_id:
+                raise ValueError("Customer ID is required")
         return self
 
 
@@ -142,6 +160,8 @@ class DuplicateCluster(BaseModel):
     systemic_alert: bool = False
     duplicate_reason: Optional[str] = None
     cluster_description: Optional[str] = None
+    recurring: bool = False
+    recurring_of: Optional[str] = None
 
 
 class SLAInfo(BaseModel):
@@ -205,6 +225,8 @@ class Complaint(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     tenant_id: str = "Union Bank"
     rbi_status: str = "within"
+    recurring: bool = False
+    recurring_of: Optional[str] = None
 
 
 def compute_rbi_status(received_at: datetime, resolved_at: Optional[datetime] = None) -> str:

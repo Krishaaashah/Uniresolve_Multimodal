@@ -4,8 +4,8 @@ Provides simulated account lookup and transaction histories for demo and verific
 """
 
 MOCK_CUSTOMERS = {
-    "CUST-10245": {
-        "id": "CUST-10245",
+    "10010245": {
+        "id": "10010245",
         "name": "Aarav Sharma",
         "phone": "+91 98765 43210",
         "email": "aarav.sharma@email.com",
@@ -22,8 +22,8 @@ MOCK_CUSTOMERS = {
             {"date": "2026-06-15", "desc": "Card/POS/Petrol Pump", "ref": "CRD982736", "amount": "- Rs 1,500.00", "status": "Success"}
         ]
     },
-    "CUST-20591": {
-        "id": "CUST-20591",
+    "20020591": {
+        "id": "20020591",
         "name": "Priya Patel",
         "phone": "+91 91234 56789",
         "email": "priya.patel@email.com",
@@ -38,8 +38,8 @@ MOCK_CUSTOMERS = {
             {"date": "2026-05-21", "desc": "EMI/Home Loan Debit/Regular", "ref": "EMI776251", "amount": "- Rs 18,450.00", "status": "Success"}
         ]
     },
-    "CUST-30482": {
-        "id": "CUST-30482",
+    "30030482": {
+        "id": "30030482",
         "name": "Amit Verma",
         "phone": "+91 88990 11223",
         "email": "amit.verma@email.com",

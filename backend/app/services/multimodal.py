@@ -154,7 +154,7 @@ def save_multimodal_file(complaint_id: str, base64_data: str, mime_type: str) ->
     
     # Save directory relative to workspace root (assuming frontend is running out of workspace/frontend)
     # We will write directly to projects/Uniresolve/frontend/assets/uploads/
-    upload_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "assets", "uploads"))
+    upload_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", "assets", "uploads"))
     os.makedirs(upload_dir, exist_ok=True)
     
     filename = f"{complaint_id}{ext}"

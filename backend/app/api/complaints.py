@@ -114,13 +114,13 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
     is_seed = payload.channel_metadata.get("seed") is True
     is_replay = payload.source_ref and payload.source_ref.startswith("replay-")
 
-    # Validate Customer ID and Transaction ID presence for manual submissions
+    # Validate Customer ID presence for manual submissions (transaction_id is optional)
     if not (is_seed or is_replay):
-        if not payload.customer_id or not payload.transaction_id:
+        if not payload.customer_id:
             if payload.media_file:
-                raise HTTPException(status_code=422, detail="IDs not detected — please enter manually")
+                raise HTTPException(status_code=422, detail="Customer ID not detected — please enter manually")
             else:
-                raise HTTPException(status_code=422, detail="Customer ID and Transaction ID are both required")
+                raise HTTPException(status_code=422, detail="Customer ID is required")
 
     # Check transaction status on ingestion and validate against the transactions table
     tx_note = None
@@ -202,12 +202,17 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
             HistoryMessage(author=MessageAuthor.AGENT, author_name="AI Assistant", content=triage_result.suggested_response, is_ai_draft=True),
         ]
     )
-    complaint.cluster = get_clustering_service().check_and_register(
+    cluster_result = get_clustering_service().check_and_register(
         complaint.id,
         masked_text,
         customer_id=complaint.customer_id,
         transaction_id=complaint.transaction_id
     )
+    complaint.cluster = cluster_result
+    # Propagate recurring flags from cluster result to the complaint top-level fields
+    complaint.recurring = cluster_result.recurring
+    complaint.recurring_of = cluster_result.recurring_of
+    
     store.save(complaint)
     store.log_audit("system", "system", "ingest", complaint.id)
     return ComplaintResponse(complaint=complaint, message="Complaint ingested and triaged successfully.")
@@ -298,45 +303,57 @@ async def get_alerts(current_user: dict = Depends(get_current_user)):
 
 @router.get("/groups")
 async def get_complaint_groups(current_user: dict = Depends(get_current_user)):
+    from datetime import timedelta
     store = get_store()
     tenant = current_user.get("tenant_id", "Union Bank")
     complaints = store.all()
     if tenant:
         complaints = [c for c in complaints if c.tenant_id == tenant]
 
-    exact_map = defaultdict(list)
-    semantic_map = defaultdict(list)
+    # Branch 1: Transaction-based exact groups — keyed by (customer_id, transaction_id)
+    # Recurring tickets get their OWN group, not folded into the resolved prior group
+    exact_map: dict = defaultdict(list)
+    # Branch 2: Non-transaction semantic groups — keyed by (customer_id, cluster_id)
+    # Only include complaints that were filed within 7 days of each other (sliding window)
+    semantic_raw: dict = defaultdict(list)
     singletons = []
 
     for c in complaints:
         if not c.customer_id:
             singletons.append(c)
             continue
+
+        # A recurring ticket is its own primary — never fold into the old resolved group
+        if c.recurring:
+            singletons.append(c)
+            continue
+
         if c.transaction_id:
+            # Branch 1: deterministic grouping by customer + transaction
             key = (c.customer_id, c.transaction_id)
             exact_map[key].append(c)
         else:
             cluster_id = c.cluster.cluster_id if (c.cluster and c.cluster.cluster_id) else None
             if cluster_id:
                 key = (c.customer_id, cluster_id)
-                semantic_map[key].append(c)
+                semantic_raw[key].append(c)
             else:
                 singletons.append(c)
 
     groups = []
 
-    # Exact groups
+    # Build Branch 1 groups
     for (cust_id, tx_id), member_tickets in exact_map.items():
         member_tickets.sort(key=lambda x: x.received_at)
         first_raised = member_tickets[0].received_at.isoformat()
         last_raised = member_tickets[-1].received_at.isoformat()
         channels = list(dict.fromkeys(c.channel.value.title() for c in member_tickets))
-        
+
         if len(member_tickets) > 1:
-            reason = f"Same customer + same transaction {tx_id}"
+            reason = "Same customer and same transaction identifier."
         else:
-            reason = f"Customer exact issue with transaction {tx_id}"
-            
+            reason = f"Customer complaint for transaction {tx_id}."
+
         group_id = f"grp_exact_{cust_id}_{tx_id}"
         groups.append({
             "group_id": group_id,
@@ -349,6 +366,7 @@ async def get_complaint_groups(current_user: dict = Depends(get_current_user)):
             "tickets": [
                 {
                     "id": c.id,
+                    "ticket_id": c.ticket_id,
                     "channel": c.channel.value.title(),
                     "timestamp": c.received_at.isoformat()
                 }
@@ -357,62 +375,83 @@ async def get_complaint_groups(current_user: dict = Depends(get_current_user)):
             "grouping_reason": reason
         })
 
-    # Semantic groups
-    for (cust_id, cl_id), member_tickets in semantic_map.items():
+    # Build Branch 2 groups: apply 7-day chronological sliding window
+    for (cust_id, cl_id), member_tickets in semantic_raw.items():
         member_tickets.sort(key=lambda x: x.received_at)
-        first_raised = member_tickets[0].received_at.isoformat()
-        last_raised = member_tickets[-1].received_at.isoformat()
-        channels = list(dict.fromkeys(c.channel.value.title() for c in member_tickets))
-        
-        if len(member_tickets) > 1:
-            reason = "Same customer, semantically similar issue (cosine > 0.80)"
-        else:
-            reason = "Customer unique issue (no matching transactions or semantic duplicates)"
-            
-        group_id = f"grp_semantic_{cust_id}_{cl_id}"
-        groups.append({
-            "group_id": group_id,
-            "customer_id": cust_id,
-            "transaction_id": None,
-            "count": len(member_tickets),
-            "channels": channels,
-            "first_raised": first_raised,
-            "last_raised": last_raised,
-            "tickets": [
-                {
-                    "id": c.id,
-                    "channel": c.channel.value.title(),
-                    "timestamp": c.received_at.isoformat()
-                }
-                for c in member_tickets
-            ],
-            "grouping_reason": reason
-        })
+        # Split cluster into windows: if gap between consecutive tickets > 7 days, start a new sub-group
+        sub_groups: list[list] = []
+        current_window: list = []
+        for ticket in member_tickets:
+            if not current_window:
+                current_window.append(ticket)
+            else:
+                gap = ticket.received_at - current_window[-1].received_at
+                if gap > timedelta(days=7):
+                    sub_groups.append(current_window)
+                    current_window = [ticket]
+                else:
+                    current_window.append(ticket)
+        if current_window:
+            sub_groups.append(current_window)
 
-    # Singletons
+        for sub_idx, window_tickets in enumerate(sub_groups):
+            window_tickets.sort(key=lambda x: x.received_at)
+            first_raised = window_tickets[0].received_at.isoformat()
+            last_raised = window_tickets[-1].received_at.isoformat()
+            channels = list(dict.fromkeys(c.channel.value.title() for c in window_tickets))
+
+            if len(window_tickets) > 1:
+                reason = "Same customer reporting a semantically similar issue within a 7-day period."
+            else:
+                reason = "Customer unique issue (no semantic duplicates found)."
+
+            group_id = f"grp_semantic_{cust_id}_{cl_id}_{sub_idx}"
+            groups.append({
+                "group_id": group_id,
+                "customer_id": cust_id,
+                "transaction_id": None,
+                "count": len(window_tickets),
+                "channels": channels,
+                "first_raised": first_raised,
+                "last_raised": last_raised,
+                "tickets": [
+                    {
+                        "id": c.id,
+                        "ticket_id": c.ticket_id,
+                        "channel": c.channel.value.title(),
+                        "timestamp": c.received_at.isoformat()
+                    }
+                    for c in window_tickets
+                ],
+                "grouping_reason": reason
+            })
+
+    # Singletons and recurring tickets (each as their own group)
     for c in singletons:
-        channels = [c.channel.value.title()]
-        first_raised = c.received_at.isoformat()
-        last_raised = c.received_at.isoformat()
+        recurring_note = ""
+        if c.recurring and c.recurring_of:
+            recurring_note = f" Recurring — previously resolved as {c.recurring_of}."
+
         groups.append({
             "group_id": f"grp_single_{c.id}",
             "customer_id": c.customer_id,
             "transaction_id": c.transaction_id,
             "count": 1,
-            "channels": channels,
-            "first_raised": first_raised,
-            "last_raised": last_raised,
+            "channels": [c.channel.value.title()],
+            "first_raised": c.received_at.isoformat(),
+            "last_raised": c.received_at.isoformat(),
             "tickets": [
                 {
                     "id": c.id,
+                    "ticket_id": c.ticket_id,
                     "channel": c.channel.value.title(),
                     "timestamp": c.received_at.isoformat()
                 }
             ],
-            "grouping_reason": "Single isolated complaint"
+            "grouping_reason": ("Recurring issue for same customer (previous ticket resolved)." + recurring_note) if c.recurring else "Single isolated complaint"
         })
 
-    # Sort groups so groups with multiple tickets or recent tickets come first
+    # Sort: multi-ticket groups first, then by most recent
     groups.sort(key=lambda x: (x["count"] > 1, x["last_raised"]), reverse=True)
     return groups
 

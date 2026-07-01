@@ -44,7 +44,7 @@ def build_complaint(raw, channel, category, severity, status, days_ago, sentimen
             src_path = os.path.join(connectors_dir, "mock_evidence", attachment_file)
             
         if os.path.exists(src_path):
-            upload_dir = os.path.abspath(os.path.join(connectors_dir, "..", "frontend", "assets", "uploads"))
+            upload_dir = os.path.abspath(os.path.join(connectors_dir, "..", "frontend", "public", "assets", "uploads"))
             os.makedirs(upload_dir, exist_ok=True)
             dst_name = f"{complaint_id}{ext}"
             dst_path = os.path.join(upload_dir, dst_name)
@@ -116,36 +116,36 @@ def main():
     dup_cluster = str(uuid4())
     rows = [
         # Hindi vernacular complaints
-        ("मेरा यूपीआई ट्रांसफर फेल हो गया है लेकिन मेरे बैंक खाते से 5000 रुपये कट गए हैं। कृपया वापस करें।", Channel.APP, Category.UPI, Severity.CRITICAL, ComplaintStatus.PENDING, 0, Sentiment.ANGRY, None, None, "CUST-HIN1", None, None, "UBI Subsidiary", "TXN-HIN1-F1"),
+        ("मेरा यूपीआई ट्रांसफर फेल हो गया है लेकिन मेरे बैंक खाते से 5000 रुपये कट गए हैं। कृपया वापस करें।", Channel.APP, Category.UPI, Severity.CRITICAL, ComplaintStatus.PENDING, 0, Sentiment.ANGRY, None, None, "40012345", None, None, "UBI Subsidiary", "400123450001"),
 
         # PII-heavy complaints
-        ("Dear Union Bank, this is Aarav Sharma. Fraud transaction on my Debit Card 4532-7102-8394-1025. Please block it immediately. My Aadhaar is 8293-1029-4820 and Mobile is +91-9820192837. Account number 9102837465.", Channel.WEB, Category.CREDIT_CARD, Severity.CRITICAL, ComplaintStatus.PENDING, 2, Sentiment.ANGRY, None, None, "CUST-30482", None, None, "Union Bank", "TXN-30482-F1"),
+        ("Dear Union Bank, this is Aarav Sharma. Fraud transaction on my Debit Card 4532-7102-8394-1025. Please block it immediately. My Aadhaar is 8293-1029-4820 and Mobile is +91-9820192837. Account number 9102837465.", Channel.WEB, Category.CREDIT_CARD, Severity.CRITICAL, ComplaintStatus.PENDING, 2, Sentiment.ANGRY, None, None, "30030482", None, None, "Union Bank", "300304820001"),
         
         # 31+ days old complaints (for 30-day regulatory clock check)
-        ("I have been waiting for my home loan foreclosure letter since May 1st. It has been more than 35 days. No response from Branch Manager.", Channel.BRANCH, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING, 35, Sentiment.FRUSTRATED, None, None, "CUST-OLD1", None, None, "Union Bank", "TXN-OLD1-S1"),
-        ("Insurance policy activation is pending for 45 days. My mobile number is 9876543210. Reference claim is 98765.", Channel.EMAIL, Category.INSURANCE, Severity.MEDIUM, ComplaintStatus.PENDING, 45, Sentiment.FRUSTRATED, None, None, "CUST-OLD2", None, None, "Union Bank", "TXN-OLD2-F1"),
+        ("I have been waiting for my home loan foreclosure letter since May 1st. It has been more than 35 days. No response from Branch Manager.", Channel.BRANCH, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING, 35, Sentiment.FRUSTRATED, None, None, "50012345", None, None, "Union Bank", "500123450001"),
+        ("Insurance policy activation is pending for 45 days. My mobile number is 9876543210. Reference claim is 98765.", Channel.EMAIL, Category.INSURANCE, Severity.MEDIUM, ComplaintStatus.PENDING, 45, Sentiment.FRUSTRATED, None, None, "60012345", None, None, "Union Bank", "600123450001"),
         
         # Legacy rows
-        ("Fraudulent credit card charge of Rs 18,500 appeared today. I did not authorise this transaction.", Channel.WEB, Category.CREDIT_CARD, Severity.CRITICAL, ComplaintStatus.ESCALATED, 1, Sentiment.ANGRY, None, None, "CUST-30482", None, None, "Union Bank", "TXN-30482-F1"),
-        ("My mobile banking app shows a successful transfer but the beneficiary has not received money.", Channel.APP, Category.MOBILE_BANKING, Severity.CRITICAL, ComplaintStatus.PENDING, 0, Sentiment.ANGRY, dup_cluster, None, "CUST-10245", "app_error.png", "image/png", "Union Bank", "TXN-10245-F1"),
-        ("Mobile banking transfer succeeded on screen but beneficiary did not receive the amount.", Channel.APP, Category.MOBILE_BANKING, Severity.HIGH, ComplaintStatus.PENDING, 0, Sentiment.FRUSTRATED, dup_cluster, "seed-duplicate", "CUST-10245", None, None, "Union Bank", "TXN-10245-F1"),
-        ("Home loan EMI was debited twice this month and I need a refund urgently.", Channel.EMAIL, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING, 2, Sentiment.ANGRY, None, None, "CUST-20591", None, None, "Union Bank", "TXN-20591-F1"),
-        ("Credit card reward points vanished after statement generation.", Channel.SOCIAL, Category.CREDIT_CARD, Severity.HIGH, ComplaintStatus.PENDING, 3, Sentiment.FRUSTRATED, None, None, "CUST-20591", None, None, "Union Bank", "TXN-20591-F2"),
-        ("Branch staff could not update my nominee details despite two visits.", Channel.BRANCH, Category.ACCOUNT, Severity.HIGH, ComplaintStatus.ESCALATED, 4, Sentiment.FRUSTRATED, None, None, "CUST-30482", None, None, "Union Bank", "TXN-30482-F2"),
-        ("Insurance claim has been pending for 20 days with no clear update.", Channel.EMAIL, Category.INSURANCE, Severity.HIGH, ComplaintStatus.PENDING, 5, Sentiment.FRUSTRATED, None, None, "CUST-OLD2", None, None, "Union Bank", "TXN-OLD2-F2"),
-        ("Account statement download fails from web portal every time.", Channel.WEB, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING, 6, Sentiment.NEUTRAL, None, None, "CUST-HIN1", None, None, "Union Bank", "TXN-HIN1-F2"),
-        ("Investment portfolio value is not refreshing in the app.", Channel.APP, Category.INVESTMENT, Severity.MEDIUM, ComplaintStatus.PENDING, 7, Sentiment.NEUTRAL, None, None, "CUST-10245", None, None, "Union Bank", "TXN-10245-F2"),
-        ("Transcribed Audio: IVR disconnected me three times before connecting to an agent.", Channel.IVR, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING, 8, Sentiment.FRUSTRATED, None, None, "CUST-OLD1", "voice_note.wav", "audio/wav", "Union Bank", "TXN-OLD1-S2"),
-        ("Credit card annual fee waiver request has no response.", Channel.EMAIL, Category.CREDIT_CARD, Severity.MEDIUM, ComplaintStatus.RESOLVED, 9, Sentiment.NEUTRAL, None, None, "CUST-30482", None, None, "Union Bank", "TXN-30482-F3"),
-        ("Loan foreclosure letter not available at branch.", Channel.BRANCH, Category.LOAN, Severity.MEDIUM, ComplaintStatus.RESOLVED, 10, Sentiment.NEUTRAL, None, None, "CUST-OLD1", None, None, "Union Bank", "TXN-OLD1-S3"),
-        ("Insurance premium receipt is missing from email.", Channel.WEB, Category.INSURANCE, Severity.MEDIUM, ComplaintStatus.RESOLVED, 11, Sentiment.NEUTRAL, None, None, "CUST-OLD2", None, None, "Union Bank", "TXN-OLD2-F3"),
-        ("Mobile banking fingerprint login stopped working after update.", Channel.APP, Category.MOBILE_BANKING, Severity.MEDIUM, ComplaintStatus.ESCALATED, 12, Sentiment.FRUSTRATED, None, None, "CUST-10245", None, None, "Union Bank", "TXN-10245-F3"),
-        ("Mutual fund SIP date change request is still pending.", Channel.BRANCH, Category.INVESTMENT, Severity.MEDIUM, ComplaintStatus.PENDING, 13, Sentiment.NEUTRAL, None, None, "CUST-20591", None, None, "Union Bank", "TXN-20591-F3"),
-        ("Please update my email address for account alerts.", Channel.BRANCH, Category.ACCOUNT, Severity.LOW, ComplaintStatus.RESOLVED, 3, Sentiment.NEUTRAL, None, None, "CUST-30482", None, None, "Union Bank", "TXN-30482-F4"),
-        ("Need information about personal loan part payment charges.", Channel.IVR, Category.LOAN, Severity.LOW, ComplaintStatus.RESOLVED, 4, Sentiment.NEUTRAL, None, None, "CUST-OLD1", None, None, "Union Bank", "TXN-OLD1-S4"),
-        ("Credit card PIN generation instructions are confusing.", Channel.WEB, Category.CREDIT_CARD, Severity.LOW, ComplaintStatus.PENDING, 5, Sentiment.NEUTRAL, None, None, "CUST-30482", None, None, "Union Bank", "TXN-30482-F5"),
-        ("Insurance policy document download link expired.", Channel.EMAIL, Category.INSURANCE, Severity.LOW, ComplaintStatus.RESOLVED, 6, Sentiment.NEUTRAL, None, None, "CUST-OLD2", None, None, "Union Bank", "TXN-OLD2-F4"),
-        ("Investment tax statement needs clearer labels.", Channel.SOCIAL, Category.INVESTMENT, Severity.LOW, ComplaintStatus.ESCALATED, 7, Sentiment.NEUTRAL, None, None, "CUST-10245", None, None, "Union Bank", "TXN-10245-F4"),
+        ("Fraudulent credit card charge of Rs 18,500 appeared today. I did not authorise this transaction.", Channel.WEB, Category.CREDIT_CARD, Severity.CRITICAL, ComplaintStatus.ESCALATED, 1, Sentiment.ANGRY, None, None, "30030482", None, None, "Union Bank", "300304820001"),
+        ("My mobile banking app shows a successful transfer but the beneficiary has not received money.", Channel.APP, Category.MOBILE_BANKING, Severity.CRITICAL, ComplaintStatus.PENDING, 0, Sentiment.ANGRY, dup_cluster, None, "10010245", "app_error.png", "image/png", "Union Bank", "100102450001"),
+        ("Mobile banking transfer succeeded on screen but beneficiary did not receive the amount.", Channel.APP, Category.MOBILE_BANKING, Severity.HIGH, ComplaintStatus.PENDING, 0, Sentiment.FRUSTRATED, dup_cluster, "seed-duplicate", "10010245", None, None, "Union Bank", "100102450001"),
+        ("Home loan EMI was debited twice this month and I need a refund urgently.", Channel.EMAIL, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING, 2, Sentiment.ANGRY, None, None, "20020591", None, None, "Union Bank", "200205910001"),
+        ("Credit card reward points vanished after statement generation.", Channel.SOCIAL, Category.CREDIT_CARD, Severity.HIGH, ComplaintStatus.PENDING, 3, Sentiment.FRUSTRATED, None, None, "20020591", None, None, "Union Bank", "200205910002"),
+        ("Branch staff could not update my nominee details despite two visits.", Channel.BRANCH, Category.ACCOUNT, Severity.HIGH, ComplaintStatus.ESCALATED, 4, Sentiment.FRUSTRATED, None, None, "30030482", None, None, "Union Bank", "300304820002"),
+        ("Insurance claim has been pending for 20 days with no clear update.", Channel.EMAIL, Category.INSURANCE, Severity.HIGH, ComplaintStatus.PENDING, 5, Sentiment.FRUSTRATED, None, None, "60012345", None, None, "Union Bank", "600123450002"),
+        ("Account statement download fails from web portal every time.", Channel.WEB, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING, 6, Sentiment.NEUTRAL, None, None, "40012345", None, None, "Union Bank", "400123450002"),
+        ("Investment portfolio value is not refreshing in the app.", Channel.APP, Category.INVESTMENT, Severity.MEDIUM, ComplaintStatus.PENDING, 7, Sentiment.NEUTRAL, None, None, "10010245", None, None, "Union Bank", "100102450002"),
+        ("Transcribed Audio: IVR disconnected me three times before connecting to an agent.", Channel.IVR, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING, 8, Sentiment.FRUSTRATED, None, None, "50012345", "voice_note.wav", "audio/wav", "Union Bank", "500123450002"),
+        ("Credit card annual fee waiver request has no response.", Channel.EMAIL, Category.CREDIT_CARD, Severity.MEDIUM, ComplaintStatus.RESOLVED, 9, Sentiment.NEUTRAL, None, None, "30030482", None, None, "Union Bank", "300304820003"),
+        ("Loan foreclosure letter not available at branch.", Channel.BRANCH, Category.LOAN, Severity.MEDIUM, ComplaintStatus.RESOLVED, 10, Sentiment.NEUTRAL, None, None, "50012345", None, None, "Union Bank", "500123450003"),
+        ("Insurance premium receipt is missing from email.", Channel.WEB, Category.INSURANCE, Severity.MEDIUM, ComplaintStatus.RESOLVED, 11, Sentiment.NEUTRAL, None, None, "60012345", None, None, "Union Bank", "600123450003"),
+        ("Mobile banking fingerprint login stopped working after update.", Channel.APP, Category.MOBILE_BANKING, Severity.MEDIUM, ComplaintStatus.ESCALATED, 12, Sentiment.FRUSTRATED, None, None, "10010245", None, None, "Union Bank", "100102450003"),
+        ("Mutual fund SIP date change request is still pending.", Channel.BRANCH, Category.INVESTMENT, Severity.MEDIUM, ComplaintStatus.PENDING, 13, Sentiment.NEUTRAL, None, None, "20020591", None, None, "Union Bank", "200205910003"),
+        ("Please update my email address for account alerts.", Channel.BRANCH, Category.ACCOUNT, Severity.LOW, ComplaintStatus.RESOLVED, 3, Sentiment.NEUTRAL, None, None, "30030482", None, None, "Union Bank", "300304820004"),
+        ("Need information about personal loan part payment charges.", Channel.IVR, Category.LOAN, Severity.LOW, ComplaintStatus.RESOLVED, 4, Sentiment.NEUTRAL, None, None, "50012345", None, None, "Union Bank", "500123450004"),
+        ("Credit card PIN generation instructions are confusing.", Channel.WEB, Category.CREDIT_CARD, Severity.LOW, ComplaintStatus.PENDING, 5, Sentiment.NEUTRAL, None, None, "30030482", None, None, "Union Bank", "300304820005"),
+        ("Insurance policy document download link expired.", Channel.EMAIL, Category.INSURANCE, Severity.LOW, ComplaintStatus.RESOLVED, 6, Sentiment.NEUTRAL, None, None, "60012345", None, None, "Union Bank", "600123450004"),
+        ("Investment tax statement needs clearer labels.", Channel.SOCIAL, Category.INVESTMENT, Severity.LOW, ComplaintStatus.ESCALATED, 7, Sentiment.NEUTRAL, None, None, "10010245", None, None, "Union Bank", "100102450004"),
     ]
     saved = []
     for idx, row in enumerate(rows):
@@ -160,7 +160,7 @@ def main():
 
     # Seed transactions
     transactions = []
-    known_customers = ["CUST-HIN1", "CUST-30482", "CUST-OLD1", "CUST-OLD2", "CUST-20591", "CUST-10245"]
+    known_customers = ["40012345", "30030482", "50012345", "60012345", "20020591", "10010245"]
     channels = ["upi", "atm", "netbanking", "branch", "app"]
     descriptions = {
         "upi": ["UPI/GPay/Failed", "UPI/PhonePe/Transfer", "UPI/Zomato/Order", "UPI/AmazonPay/Refund"],
@@ -172,8 +172,8 @@ def main():
     
     # Specific transactions for test verification
     transactions.append({
-        "transaction_id": "TXN-HIN1-F1",
-        "customer_id": "CUST-HIN1",
+        "transaction_id": "400123450001",
+        "customer_id": "40012345",
         "amount": "₹5,000.00",
         "status": "failed",
         "date": "2026-06-29",
@@ -181,8 +181,8 @@ def main():
         "description": "UPI/GPay/Failed/Rent"
     })
     transactions.append({
-        "transaction_id": "TXN-30482-F1",
-        "customer_id": "CUST-30482",
+        "transaction_id": "300304820001",
+        "customer_id": "30030482",
         "amount": "₹18,500.00",
         "status": "failed",
         "date": "2026-06-28",
@@ -190,8 +190,8 @@ def main():
         "description": "Card/Blocked Alert/Wrong PIN"
     })
     transactions.append({
-        "transaction_id": "TXN-OLD1-S1",
-        "customer_id": "CUST-OLD1",
+        "transaction_id": "500123450001",
+        "customer_id": "50012345",
         "amount": "₹25,000.00",
         "status": "success",
         "date": "2026-05-01",
@@ -199,8 +199,8 @@ def main():
         "description": "Home Loan foreclosure processing fee"
     })
     transactions.append({
-        "transaction_id": "TXN-OLD2-F1",
-        "customer_id": "CUST-OLD2",
+        "transaction_id": "600123450001",
+        "customer_id": "60012345",
         "amount": "₹3,000.00",
         "status": "failed",
         "date": "2026-05-15",
@@ -208,8 +208,8 @@ def main():
         "description": "Insurance claim processing payment"
     })
     transactions.append({
-        "transaction_id": "TXN-10245-F1",
-        "customer_id": "CUST-10245",
+        "transaction_id": "100102450001",
+        "customer_id": "10010245",
         "amount": "₹3,000.00",
         "status": "failed",
         "date": "2026-06-30",
@@ -217,8 +217,8 @@ def main():
         "description": "UPI/Transfer/Friend"
     })
     transactions.append({
-        "transaction_id": "TXN-20591-F1",
-        "customer_id": "CUST-20591",
+        "transaction_id": "200205910001",
+        "customer_id": "20020591",
         "amount": "₹12,000.00",
         "status": "failed",
         "date": "2026-06-28",
@@ -226,8 +226,8 @@ def main():
         "description": "EMI Auto-debit retry"
     })
     transactions.append({
-        "transaction_id": "TXN-20591-F2",
-        "customer_id": "CUST-20591",
+        "transaction_id": "200205910002",
+        "customer_id": "20020591",
         "amount": "₹500.00",
         "status": "success",
         "date": "2026-06-27",
@@ -235,8 +235,8 @@ def main():
         "description": "Credit card point redemption fee"
     })
     transactions.append({
-        "transaction_id": "TXN-30482-F2",
-        "customer_id": "CUST-30482",
+        "transaction_id": "300304820002",
+        "customer_id": "30030482",
         "amount": "₹10,000.00",
         "status": "success",
         "date": "2026-06-26",
@@ -244,8 +244,8 @@ def main():
         "description": "Nominee update processing"
     })
     transactions.append({
-        "transaction_id": "TXN-OLD2-F2",
-        "customer_id": "CUST-OLD2",
+        "transaction_id": "600123450002",
+        "customer_id": "60012345",
         "amount": "₹5,000.00",
         "status": "failed",
         "date": "2026-06-25",
@@ -253,8 +253,8 @@ def main():
         "description": "Premium deposit check"
     })
     transactions.append({
-        "transaction_id": "TXN-HIN1-F2",
-        "customer_id": "CUST-HIN1",
+        "transaction_id": "400123450002",
+        "customer_id": "40012345",
         "amount": "₹100.00",
         "status": "success",
         "date": "2026-06-24",
@@ -262,8 +262,8 @@ def main():
         "description": "Statement download processing fee"
     })
     transactions.append({
-        "transaction_id": "TXN-10245-F2",
-        "customer_id": "CUST-10245",
+        "transaction_id": "100102450002",
+        "customer_id": "10010245",
         "amount": "₹1,500.00",
         "status": "pending",
         "date": "2026-06-23",
@@ -271,8 +271,8 @@ def main():
         "description": "Mutual fund SIP installment"
     })
     transactions.append({
-        "transaction_id": "TXN-OLD1-S2",
-        "customer_id": "CUST-OLD1",
+        "transaction_id": "500123450002",
+        "customer_id": "50012345",
         "amount": "₹250.00",
         "status": "success",
         "date": "2026-06-22",
@@ -280,8 +280,8 @@ def main():
         "description": "IVR service query fee"
     })
     transactions.append({
-        "transaction_id": "TXN-30482-F3",
-        "customer_id": "CUST-30482",
+        "transaction_id": "300304820003",
+        "customer_id": "30030482",
         "amount": "₹0.00",
         "status": "success",
         "date": "2026-06-21",
@@ -289,8 +289,8 @@ def main():
         "description": "Credit card annual fee check"
     })
     transactions.append({
-        "transaction_id": "TXN-OLD1-S3",
-        "customer_id": "CUST-OLD1",
+        "transaction_id": "500123450003",
+        "customer_id": "50012345",
         "amount": "₹15,000.00",
         "status": "success",
         "date": "2026-06-20",
@@ -298,8 +298,8 @@ def main():
         "description": "Loan document verification fee"
     })
     transactions.append({
-        "transaction_id": "TXN-OLD2-F3",
-        "customer_id": "CUST-OLD2",
+        "transaction_id": "600123450003",
+        "customer_id": "60012345",
         "amount": "₹2,500.00",
         "status": "success",
         "date": "2026-06-19",
@@ -307,8 +307,8 @@ def main():
         "description": "Premium receipt processing"
     })
     transactions.append({
-        "transaction_id": "TXN-10245-F3",
-        "customer_id": "CUST-10245",
+        "transaction_id": "100102450003",
+        "customer_id": "10010245",
         "amount": "₹0.00",
         "status": "success",
         "date": "2026-06-18",
@@ -316,8 +316,8 @@ def main():
         "description": "App biometric update"
     })
     transactions.append({
-        "transaction_id": "TXN-20591-F3",
-        "customer_id": "CUST-20591",
+        "transaction_id": "200205910003",
+        "customer_id": "20020591",
         "amount": "₹1,000.00",
         "status": "pending",
         "date": "2026-06-17",
@@ -325,8 +325,8 @@ def main():
         "description": "SIP modify request processing"
     })
     transactions.append({
-        "transaction_id": "TXN-30482-F4",
-        "customer_id": "CUST-30482",
+        "transaction_id": "300304820004",
+        "customer_id": "30030482",
         "amount": "₹0.00",
         "status": "success",
         "date": "2026-06-16",
@@ -334,8 +334,8 @@ def main():
         "description": "Nominee details lookup"
     })
     transactions.append({
-        "transaction_id": "TXN-OLD1-S4",
-        "customer_id": "CUST-OLD1",
+        "transaction_id": "500123450004",
+        "customer_id": "50012345",
         "amount": "₹0.00",
         "status": "success",
         "date": "2026-06-15",
@@ -343,8 +343,8 @@ def main():
         "description": "Personal loan info call charge"
     })
     transactions.append({
-        "transaction_id": "TXN-30482-F5",
-        "customer_id": "CUST-30482",
+        "transaction_id": "300304820005",
+        "customer_id": "30030482",
         "amount": "₹100.00",
         "status": "success",
         "date": "2026-06-14",
@@ -352,8 +352,8 @@ def main():
         "description": "PIN generation OTP SMS fee"
     })
     transactions.append({
-        "transaction_id": "TXN-OLD2-F4",
-        "customer_id": "CUST-OLD2",
+        "transaction_id": "600123450004",
+        "customer_id": "60012345",
         "amount": "₹0.00",
         "status": "success",
         "date": "2026-06-13",
@@ -361,8 +361,8 @@ def main():
         "description": "Policy document check"
     })
     transactions.append({
-        "transaction_id": "TXN-10245-F4",
-        "customer_id": "CUST-10245",
+        "transaction_id": "100102450004",
+        "customer_id": "10010245",
         "amount": "₹0.00",
         "status": "success",
         "date": "2026-06-12",
@@ -382,7 +382,7 @@ def main():
         dt_str = (datetime.utcnow() - timedelta(days=random.randint(0, 30))).date().isoformat()
         
         transactions.append({
-            "transaction_id": f"TXN-RAND-{i:03d}",
+            "transaction_id": f"120000000{i:03d}",
             "customer_id": cust,
             "amount": f"₹{amount_val:,.2f}",
             "status": status,
