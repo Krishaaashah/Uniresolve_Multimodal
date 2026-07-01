@@ -4,11 +4,16 @@ Main FastAPI application
 """
 
 import asyncio
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+# pyrefly: ignore [missing-import]
 from slowapi.errors import RateLimitExceeded
+# pyrefly: ignore [missing-import]
 from slowapi.middleware import SlowAPIMiddleware
 from app.services.cbs import get_customer_profile
 from app.security import require_role
@@ -20,12 +25,38 @@ from app.config import ALLOWED_ORIGINS
 from app.services.store import get_store
 from app.services.triage import get_triage_service
 
+async def _sla_monitor():
+    while True:
+        get_store().mark_sla_breaches()
+        await asyncio.sleep(300)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Pre-warm services at startup
+    from app.services.clustering import get_clustering_service
+    from app.services.triage import get_triage_service
+    get_clustering_service()
+    get_triage_service()
+
+    from app.connectors.orchestrator import run_orchestrator
+    sla_task = asyncio.create_task(_sla_monitor())
+    orchestrator_task = asyncio.create_task(run_orchestrator())
+    
+    yield
+    
+    # Clean up on shutdown
+    sla_task.cancel()
+    orchestrator_task.cancel()
+
+
 app = FastAPI(
     title="UniResolve API",
     description="Gen-AI Powered Unified Complaint Intelligence for Union Bank of India",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.state.limiter = limiter
@@ -45,25 +76,6 @@ app.add_middleware(
 
 
 app.include_router(complaints_router)
-
-
-async def _sla_monitor():
-    while True:
-        get_store().mark_sla_breaches()
-        await asyncio.sleep(300)
-
-
-@app.on_event("startup")
-async def startup_tasks():
-    # Pre-warm services at startup
-    from app.services.clustering import get_clustering_service
-    from app.services.triage import get_triage_service
-    get_clustering_service()
-    get_triage_service()
-
-    from app.connectors.orchestrator import run_orchestrator
-    asyncio.create_task(_sla_monitor())
-    asyncio.create_task(run_orchestrator())
 
 
 
