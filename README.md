@@ -6,8 +6,8 @@ This project addresses **PS5: Unified Omnichannel Customer Grievance Ingestion a
 ## Live Demo
 Run locally using the instructions below.
 
-🎥 Demo Video: [https://youtube.com/...] (Placeholder)
-🔗 Live Web App: [Run locally using instructions below]
+* Demo Video: [https://youtube.com/...] (Placeholder)
+* Live Web App: [Run locally using instructions below]
 
 ## Tech Stack
 * Python 3.11
@@ -134,15 +134,13 @@ No real bank or customer records were used.
 
 ## Team
 **Team Checkmates**:
-* **Krisha Shah** — ML model development & backend services (duplicate clustering, PII masking).
-* **Janhavi Doijad** — Front-end Next.js UI developer & data visualisations.
-* **Jhotika Raja** — System integration, API connectors, & Docker orchestration.
-* **Disha Gupta** — Domain research, project workflow analysis, & documentation.
+* **Krisha Shah** — ML model development, backend services (duplicate clustering, PII masking), System integration & API connectors.
+* **Disha Gupta** — Front-end Next.js UI developer, Docker orchestration & documentation.
+* **Janhavi Doijad** — Domain research, project workflow analysis, & data visualisations.
 
 ---
 
 ## Contact
 **Team Name**: Checkmates  
-**Institute**: Symbiosis Institute of Technology (SIT)  
-**Email**: [Team Email]  
-*iDEA 2.0 Phase 2 Submission*
+**Institute**: Symbiosis Institute of Technology (SIT), Pune  
+*iDEA 2.0 Grand Finale Phase 2 Submission*
