@@ -499,7 +499,69 @@ class ComplaintStore:
         c.communication_history.append(HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content=f"Status changed to {status.value}."))
         if status == ComplaintStatus.RESOLVED:
             c.resolved_at = datetime.utcnow()
-        return self.save(c)
+            
+        saved_c = self.save(c)
+        
+        # If resolving, propagate status to duplicates / master
+        if status == ComplaintStatus.RESOLVED:
+            parent_uuid = None
+            parent_tkt_id = None
+            
+            # Determine parent identifiers
+            if c.cluster and c.cluster.duplicate_of:
+                parent_uuid = c.cluster.duplicate_of
+            if c.parent_ticket_id:
+                parent_tkt_id = c.parent_ticket_id
+                
+            # If we only have one identifier, look up the other to ensure full coverage
+            if parent_uuid and not parent_tkt_id:
+                parent_complaint = self.get(parent_uuid)
+                if parent_complaint:
+                    parent_tkt_id = parent_complaint.ticket_id
+            elif parent_tkt_id and not parent_uuid:
+                for ticket in self.all():
+                    if ticket.ticket_id == parent_tkt_id:
+                        parent_uuid = ticket.id
+                        break
+            
+            # If neither is set, c itself is the parent
+            if not parent_uuid and not parent_tkt_id:
+                parent_uuid = c.id
+                parent_tkt_id = c.ticket_id
+                
+            parent_identifiers = {pid for pid in (parent_uuid, parent_tkt_id) if pid}
+            
+            if parent_identifiers:
+                for ticket in self.all():
+                    if ticket.id == c.id:
+                        continue
+                    # It is the parent if its UUID or ticket_id matches
+                    is_parent = (ticket.id in parent_identifiers) or (ticket.ticket_id in parent_identifiers)
+                    # It is a duplicate if its duplicate_of matches or parent_ticket_id matches
+                    is_duplicate = (
+                        (ticket.cluster and ticket.cluster.duplicate_of in parent_identifiers) or
+                        (ticket.parent_ticket_id in parent_identifiers)
+                    )
+                    
+                    if is_parent or is_duplicate:
+                        if ticket.status != ComplaintStatus.RESOLVED:
+                            ticket.status = ComplaintStatus.RESOLVED
+                            ticket.updated_at = datetime.utcnow()
+                            ticket.resolved_at = datetime.utcnow()
+                            if agent_note:
+                                ticket.agent_note = f"[Auto-closed as duplicate of {c.ticket_id}]: {agent_note}"
+                                ticket.communication_history.append(HistoryMessage(
+                                    author=MessageAuthor.AGENT, 
+                                    author_name="Agent (Auto-close)", 
+                                    content=f"[Auto-closed as duplicate of {c.ticket_id}]: {agent_note}"
+                                ))
+                            ticket.communication_history.append(HistoryMessage(
+                                author=MessageAuthor.SYSTEM, 
+                                author_name="System", 
+                                content=f"Auto-resolved because duplicate/parent ticket {c.ticket_id} was resolved."
+                            ))
+                            self.save(ticket)
+        return saved_c
 
     def add_message(self, complaint_id: str, msg: HistoryMessage) -> Optional[Complaint]:
         c = self.get(complaint_id)
