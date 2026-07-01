@@ -105,6 +105,28 @@ export default function Page() {
       setUsername(uname);
       loadAllData();
       checkBackendHealth();
+    } else {
+      // Auto login as admin to bypass role login screen
+      const autoLogin = async () => {
+        try {
+          const res = await api.login({ username: "admin", password: "admin123" });
+          localStorage.setItem("auth_token", res.access_token);
+          localStorage.setItem("auth_role", res.role);
+          localStorage.setItem("auth_username", res.username);
+          setAuthenticated(true);
+          setUserRole(res.role);
+          setUsername(res.username);
+          loadAllData();
+          checkBackendHealth();
+        } catch (err) {
+          console.error("Auto login failed", err);
+          // Graceful fallback for offline/local default
+          setAuthenticated(true);
+          setUserRole("admin");
+          setUsername("Administrator");
+        }
+      };
+      autoLogin();
     }
 
     // 3. API forced logouts listener
@@ -343,15 +365,6 @@ export default function Page() {
             <span className="block text-[10px] text-slate-500 font-bold uppercase select-none">Acting User</span>
             <span className="text-slate-200 block truncate">{username}</span>
           </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            onClick={logout}
-            title="Log Out"
-            className="h-8 w-8 text-slate-500 hover:text-rose-500 hover:bg-slate-800/50 cursor-pointer"
-          >
-            <LogOut className="h-4 w-4" />
-          </Button>
         </div>
       </aside>
 
