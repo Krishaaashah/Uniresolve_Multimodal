@@ -72,8 +72,28 @@ async def auth_login(payload: LoginIn):
         "tenant_id": user["tenant_id"]
     }
 
-
-
+def is_spam_query(text: str) -> bool:
+    import re
+    cleaned = text.strip()
+    if not cleaned:
+        return True
+    if len(cleaned) < 15:
+        return True
+    # If any word is too long (keyboard mashing)
+    if any(len(w) > 25 for w in cleaned.split()):
+        return True
+    alphas = sum(1 for c in cleaned if c.isalpha())
+    if (alphas / len(cleaned)) < 0.35:
+        return True
+    if re.search(r"([a-zA-Z0-9])\1{4,}", cleaned):
+        return True
+    words = cleaned.lower().split()
+    if len(words) > 8:
+        word_counts = Counter(words)
+        most_common_word, count = word_counts.most_common(1)[0]
+        if count / len(words) > 0.5:
+            return True
+    return False
 
 @router.post("/ingest", response_model=ComplaintResponse, dependencies=[Depends(check_api_key)])
 @limiter.limit("60/minute")
@@ -150,10 +170,11 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
                 payload.raw_text = f"{payload.raw_text}\n\n[Transaction Status Context]: {tx_note}"
                 masked_text = f"{masked_text}\n\n[Transaction Status Context]: {tx_note}"
 
-    # Conserve rate limits for background loops/seeding
+    # Conserve rate limits for background loops/seeding or spam queries
     is_seed = payload.channel_metadata.get("seed") is True
     is_replay = payload.source_ref and payload.source_ref.startswith("replay-")
-    skip_ai_draft = is_seed or is_replay
+    is_spam = is_spam_query(payload.raw_text)
+    skip_ai_draft = is_seed or is_replay or is_spam
 
     triage_result = get_triage_service().triage(
         masked_text,
@@ -162,6 +183,11 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
         customer_id=payload.customer_id,
         transaction_id=payload.transaction_id
     )
+    if is_spam:
+        triage_result.confidence = 0.0
+        triage_result.severity_reason = "Flagged as spam/gibberish by local verification filter."
+        triage_result.suggested_response = "Automatic response generation skipped for unverified query."
+        
     received_at = payload.received_at or datetime.utcnow()
     
     complaint = Complaint(
@@ -290,13 +316,18 @@ async def get_alerts(current_user: dict = Depends(get_current_user)):
         if c.cluster and c.cluster.systemic_alert:
             cl_id = c.cluster.cluster_id
             cluster_size = len(cluster_groups[cl_id])
+            
+            # Check unique customer count
+            unique_customers = {x.customer_id for x in cluster_groups[cl_id] if x.customer_id}
             c.cluster.cluster_size = cluster_size
-            c.cluster.systemic_alert = cluster_size >= 5
+            c.cluster.systemic_alert = len(unique_customers) >= 5
             
             if c.cluster.systemic_alert:
                 desc = get_cached_cluster_description(cl_id, cluster_groups[cl_id])
                 c.cluster.cluster_description = desc
-                alerts.append(c)
+                # Avoid duplicate clusters in output list
+                if not any(a.cluster.cluster_id == cl_id for a in alerts):
+                    alerts.append(c)
                 
     return {"alerts": alerts, "count": len(alerts)}
 

@@ -1,21 +1,16 @@
 """
 PII Scrubbing Service
-Masks: Account numbers, mobile numbers, email addresses,
-       customer names (via pattern), Aadhaar, PAN, card numbers.
-Hybrid regex + spaCy NER.
+Upgraded to use Microsoft Presidio + Custom Indian Banking recognizers.
+Falls back to Regex if Presidio encounters any issues.
 """
 
 import re
-import spacy
+import logging
 from typing import Tuple
 
-try:
-    nlp = spacy.load("en_core_web_sm")
-except Exception:
-    nlp = None
+logger = logging.getLogger(__name__)
 
-# ── Regex patterns ──────────────────────────────────────────────────────────────
-# Ordered from most specific/long to more general patterns
+# ── Regex patterns (Fallback) ──────────────────────────────────────────────────
 PATTERNS = {
     "CARD_NUMBER":    r"\b(?:\d[ -]?){15,16}\b",
     "AADHAAR":        r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b",
@@ -38,16 +33,9 @@ REPLACEMENT = {
     "NAME_SALUTATION": "[NAME_XXXX]",
 }
 
-
-def mask_pii(text: str) -> Tuple[str, list]:
-    """
-    Returns (masked_text, list_of_detected_entity_types).
-    Runs regex patterns first, then spaCy NER for PERSON entities on the result.
-    """
-    detected: list[str] = []
+def _regex_mask_pii(text: str) -> Tuple[str, list]:
+    detected = []
     masked = text
-
-    # 1. Regex masking
     for entity_type, pattern in PATTERNS.items():
         flags = re.IGNORECASE if entity_type == "NAME_SALUTATION" else 0
         matches = re.findall(pattern, masked, flags=flags)
@@ -55,28 +43,92 @@ def mask_pii(text: str) -> Tuple[str, list]:
             if entity_type not in detected:
                 detected.append(entity_type)
             masked = re.sub(pattern, REPLACEMENT[entity_type], masked, flags=flags)
-
-    # 2. spaCy NER for bare names (PERSON entities) without salutation
-    if nlp:
-        try:
-            doc = nlp(masked)
-            ents = sorted([ent for ent in doc.ents if ent.label_ == "PERSON"], key=lambda e: e.start_char, reverse=True)
-            for ent in ents:
-                # Avoid touching placeholders that might contain brackets
-                if "[" in ent.text or "]" in ent.text:
-                    continue
-                start, end = ent.start_char, ent.end_char
-                masked = masked[:start] + "[NAME_XXXX]" + masked[end:]
-                if "NAME_SALUTATION" not in detected:
-                    detected.append("NAME_SALUTATION")
-        except Exception:
-            pass
-
     return masked, detected
 
+# ── Microsoft Presidio Setup ───────────────────────────────────────────────────
+_presidio_ready = False
+analyzer = None
+anonymizer = None
+
+try:
+    from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
+    from presidio_anonymizer import AnonymizerEngine
+    from presidio_anonymizer.entities import OperatorConfig
+
+    analyzer = AnalyzerEngine()
+    anonymizer = AnonymizerEngine()
+
+    # Define custom banking recognizers
+    pan_pattern = Pattern(name="pan_pattern", regex=r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", score=0.95)
+    pan_recognizer = PatternRecognizer(supported_entity="PAN", patterns=[pan_pattern])
+    analyzer.registry.add_recognizer(pan_recognizer)
+
+    aadhaar_pattern = Pattern(name="aadhaar_pattern", regex=r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b", score=0.95)
+    aadhaar_recognizer = PatternRecognizer(supported_entity="AADHAAR", patterns=[aadhaar_pattern])
+    analyzer.registry.add_recognizer(aadhaar_recognizer)
+
+    ifsc_pattern = Pattern(name="ifsc_pattern", regex=r"\b[A-Z]{4}0[A-Z0-9]{6}\b", score=0.95)
+    ifsc_recognizer = PatternRecognizer(supported_entity="IFSC", patterns=[ifsc_pattern])
+    analyzer.registry.add_recognizer(ifsc_recognizer)
+
+    card_pattern = Pattern(name="card_pattern", regex=r"\b(?:\d[ -]?){15,16}\b", score=0.95)
+    card_recognizer = PatternRecognizer(supported_entity="CARD_NUMBER", patterns=[card_pattern])
+    analyzer.registry.add_recognizer(card_recognizer)
+
+    account_pattern = Pattern(name="account_pattern", regex=r"\b\d{9,18}\b", score=0.90)
+    account_recognizer = PatternRecognizer(supported_entity="ACCOUNT_NUMBER", patterns=[account_pattern])
+    analyzer.registry.add_recognizer(account_recognizer)
+
+    _presidio_ready = True
+    logger.info("Microsoft Presidio PII Scrubber initialized successfully.")
+except Exception as e:
+    logger.warning(f"Presidio initialization failed: {e}. Falling back to Regex PII masking.")
+    _presidio_ready = False
+
+# Mapping from Presidio Entity Names to internal entity tags
+ENTITY_MAPPING = {
+    "PAN": "PAN",
+    "AADHAAR": "AADHAAR",
+    "IFSC": "IFSC",
+    "CARD_NUMBER": "CARD_NUMBER",
+    "ACCOUNT_NUMBER": "ACCOUNT_NUMBER",
+    "EMAIL_ADDRESS": "EMAIL",
+    "PHONE_NUMBER": "MOBILE",
+    "PERSON": "NAME_SALUTATION",
+}
+
+OPERATORS = {
+    "PAN": OperatorConfig("replace", {"new_value": "[PAN_XXXX]"}),
+    "AADHAAR": OperatorConfig("replace", {"new_value": "[AADHAAR_XXXX]"}),
+    "IFSC": OperatorConfig("replace", {"new_value": "[IFSC_XXXX]"}),
+    "CARD_NUMBER": OperatorConfig("replace", {"new_value": "[CARD_XXXX]"}),
+    "ACCOUNT_NUMBER": OperatorConfig("replace", {"new_value": "[ACCOUNT_XXXX]"}),
+    "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "[EMAIL_XXXX]"}),
+    "PHONE_NUMBER": OperatorConfig("replace", {"new_value": "[MOBILE_XXXX]"}),
+    "PERSON": OperatorConfig("replace", {"new_value": "[NAME_XXXX]"}),
+}
+
+def mask_pii(text: str) -> Tuple[str, list]:
+    if not _presidio_ready:
+        return _regex_mask_pii(text)
+
+    try:
+        results = analyzer.analyze(
+            text=text,
+            language="en",
+            entities=["PAN", "AADHAAR", "IFSC", "CARD_NUMBER", "ACCOUNT_NUMBER", "EMAIL_ADDRESS", "PHONE_NUMBER", "PERSON"]
+        )
+        anonymized = anonymizer.anonymize(
+            text=text,
+            analyzer_results=results,
+            operators=OPERATORS
+        )
+        detected = list(set(ENTITY_MAPPING.get(r.entity_type, r.entity_type) for r in results))
+        return anonymized.text, detected
+    except Exception as e:
+        logger.warning(f"Presidio masking failed at runtime: {e}. Running regex fallback.")
+        return _regex_mask_pii(text)
 
 def is_safe(text: str) -> bool:
-    """Quick check — True if no PII detected."""
     _, detected = mask_pii(text)
     return len(detected) == 0
-

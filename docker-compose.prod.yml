@@ -1,0 +1,77 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: uniresolve_db
+    restart: always
+    environment:
+      POSTGRES_USER: uniresolve_user
+      POSTGRES_PASSWORD: uniresolve_password
+      POSTGRES_DB: uniresolve
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  qdrant:
+    image: qdrant/qdrant:v1.7.4
+    container_name: uniresolve_qdrant
+    restart: always
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: uniresolve_broker
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: uniresolve_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://uniresolve_user:uniresolve_password@postgres:5432/uniresolve
+      - QDRANT_URL=http://qdrant:6333
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    depends_on:
+      - postgres
+      - qdrant
+      - rabbitmq
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: uniresolve_worker
+    restart: always
+    command: celery -A app.tasks worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://uniresolve_user:uniresolve_password@postgres:5432/uniresolve
+      - QDRANT_URL=http://qdrant:6333
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    depends_on:
+      - rabbitmq
+      - postgres
+      - qdrant
+
+volumes:
+  postgres_data:
+  qdrant_data:
