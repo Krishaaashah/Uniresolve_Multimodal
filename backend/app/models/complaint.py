@@ -157,6 +157,7 @@ class DuplicateCluster(BaseModel):
     is_duplicate: bool = False
     duplicate_of: Optional[str] = None
     cluster_size: int = 1
+    affected_customers: int = 1
     systemic_alert: bool = False
     duplicate_reason: Optional[str] = None
     cluster_description: Optional[str] = None
@@ -227,6 +228,14 @@ class Complaint(BaseModel):
     rbi_status: str = "within"
     recurring: bool = False
     recurring_of: Optional[str] = None
+    needs_human: bool = False
+    needs_info: bool = False
+    agent_trace: list[dict] = Field(default_factory=list)
+    thread_id: Optional[str] = None
+    linked_incident: Optional[str] = None
+    priority_score: int = 0
+    detected_language: str = "English"
+    missing_fields_question: Optional[str] = None
 
 
 def compute_rbi_status(received_at: datetime, resolved_at: Optional[datetime] = None) -> str:

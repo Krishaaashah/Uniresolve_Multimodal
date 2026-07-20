@@ -9,7 +9,7 @@ import {
   BarChart as RechartsBarChart, Bar, Cell, LineChart as RechartsLineChart, Line, PieChart as RechartsPieChart, 
   Pie, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend 
 } from "recharts";
-import { AlertCircle, Bot, Building, Clock, Folder, Globe, Mail, Network, Phone, Plus, Search, ShieldAlert, Sparkles, TrendingUp } from "lucide-react";
+import { AlertCircle, Bot, Building, Clock, Folder, Globe, HelpCircle, Mail, Network, Phone, Plus, Search, ShieldAlert, Sparkles, TrendingUp } from "lucide-react";
 import SentimentHeatmap from "./SentimentHeatmap";
 
 interface DashboardViewProps {
@@ -89,16 +89,20 @@ export default function DashboardView({
     { name: "Low", value: stats.by_severity?.low || 0, color: "#10b981" }
   ];
 
-  // Process Sparkline data from 7d trends
-  const trendData = trends?.data || [];
-  const sparklineMap: Record<string, number> = {};
-  trendData.forEach((d: any) => {
-    sparklineMap[d.date] = (sparklineMap[d.date] || 0) + d.count;
-  });
-  const sparklineData = Object.entries(sparklineMap).map(([date, count]) => ({
-    date,
-    count
-  }));
+  // Process trailing 7 calendar days (UTC) sparkline volume including zero-days
+  const sparklineData = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - i);
+    const dateStr = d.toISOString().split("T")[0];
+    
+    // Count complaints received on this calendar date
+    const count = complaints.filter(c => {
+      const recDate = new Date(c.received_at).toISOString().split("T")[0];
+      return recDate === dateStr;
+    }).length;
+    
+    return { date: dateStr, count };
+  }).reverse();
 
   const categoryColors = ["#3b82f6", "#ef4444", "#8b5cf6", "#f97316", "#10b981", "#eab308", "#334155", "#64748b"];
 
@@ -157,12 +161,19 @@ export default function DashboardView({
 
         {/* SLA Breached */}
         <Card className="border-l-4 border-l-rose-500 shadow-sm">
-          <CardHeader className="p-4 pb-2">
+          <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between space-y-0">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">SLA Breached</span>
-            <CardTitle className="text-2xl font-black text-rose-600 mt-1">{stats.sla_breached || 0}</CardTitle>
+            <div className="group relative inline-block cursor-pointer select-none">
+              <HelpCircle className="h-3.5 w-3.5 text-slate-400 hover:text-slate-600" />
+              <div className="absolute right-0 bottom-full mb-2 w-72 rounded-lg bg-slate-900 p-2.5 text-[11px] font-semibold leading-normal text-white shadow-xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-200 z-50">
+                SLA deadline = received_at + SLA_HOURS (from category config). ON_TRACK until 80% of the window is used, AT_RISK in the final 20%, BREACHED past deadline. Separate RBI clock: within &le;20 days, approaching &le;30, ombudsman-eligible &gt;30 days.
+                <div className="absolute right-1.5 top-full border-4 border-transparent border-t-slate-900" />
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="p-4 pt-0">
-            <span className="text-[10px] text-slate-400">Compliance risk</span>
+            <CardTitle className="text-2xl font-black text-rose-600 mt-1">{stats.sla_breached || 0}</CardTitle>
+            <span className="text-[10px] text-slate-400 block mt-1">Compliance risk</span>
           </CardContent>
         </Card>
 

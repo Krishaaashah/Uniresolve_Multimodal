@@ -145,9 +145,14 @@ export default function AlertsView({ complaints, onInspect }: AlertsViewProps) {
                     <span className="font-black text-rose-600 text-xs tracking-wider uppercase select-none">
                       INCIDENT ID: {clId ? clId.substring(0, 8).toUpperCase() : "UNKNOWN"}
                     </span>
-                    <Badge className="bg-rose-100 text-rose-800 hover:bg-rose-100 font-extrabold uppercase text-[10px]">
-                      {members.length} targets
-                    </Badge>
+                    <div className="flex gap-2">
+                      <Badge className="bg-rose-150 text-rose-900 hover:bg-rose-150 font-extrabold uppercase text-[10px]">
+                        {members.length} targets
+                      </Badge>
+                      <Badge className="bg-rose-600 text-white hover:bg-rose-700 font-extrabold uppercase text-[10px]">
+                        {c.cluster?.affected_customers || 1} customers affected
+                      </Badge>
+                    </div>
                   </div>
 
                   <div className="text-xs text-slate-700 space-y-1.5 font-medium select-none">

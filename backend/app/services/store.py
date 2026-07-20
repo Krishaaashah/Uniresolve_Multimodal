@@ -105,6 +105,7 @@ class ComplaintStore:
                     confidence REAL,
                     cluster_size INTEGER DEFAULT 1,
                     systemic_alert INTEGER DEFAULT 0,
+                    affected_customers INTEGER DEFAULT 1,
                     escalation_level TEXT,
                     escalation_history TEXT,
                     communication_history TEXT,
@@ -128,12 +129,42 @@ class ComplaintStore:
                 "ALTER TABLE complaints ADD COLUMN parent_ticket_id TEXT",
                 "ALTER TABLE complaints ADD COLUMN recurring INTEGER DEFAULT 0",
                 "ALTER TABLE complaints ADD COLUMN recurring_of TEXT",
+                "ALTER TABLE complaints ADD COLUMN affected_customers INTEGER DEFAULT 1",
+                "ALTER TABLE complaints ADD COLUMN needs_human INTEGER DEFAULT 0",
+                "ALTER TABLE complaints ADD COLUMN needs_info INTEGER DEFAULT 0",
+                "ALTER TABLE complaints ADD COLUMN agent_trace TEXT",
+                "ALTER TABLE complaints ADD COLUMN thread_id TEXT",
+                "ALTER TABLE complaints ADD COLUMN linked_incident TEXT",
+                "ALTER TABLE complaints ADD COLUMN priority_score INTEGER DEFAULT 0",
+                "ALTER TABLE complaints ADD COLUMN missing_fields_question TEXT",
             ]
             for sql in _optional_cols:
                 try:
                     conn.execute(sa_text(sql))
                 except SAOperationalError:
                     pass  # column already exists
+
+            conn.execute(sa_text("""
+                CREATE TABLE IF NOT EXISTS ledger (
+                    id TEXT PRIMARY KEY,
+                    complaint_id TEXT,
+                    event TEXT,
+                    actor TEXT,
+                    timestamp TEXT,
+                    prev_hash TEXT,
+                    hash TEXT
+                )
+            """))
+
+            conn.execute(sa_text("""
+                CREATE TABLE IF NOT EXISTS incidents (
+                    cluster_id TEXT PRIMARY KEY,
+                    label TEXT,
+                    customer_count INTEGER,
+                    ticket_count INTEGER,
+                    status TEXT DEFAULT 'active'
+                )
+            """))
 
             conn.execute(sa_text("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -233,11 +264,17 @@ class ComplaintStore:
         except Exception:
             dup_reason = None
 
+        try:
+            affected_custs = int(row["affected_customers"] or 1)
+        except Exception:
+            affected_custs = 1
+
         cluster = DuplicateCluster(
             cluster_id=row["cluster_id"] or "",
             is_duplicate=bool(row["duplicate_of"]),
             duplicate_of=row["duplicate_of"],
             cluster_size=int(row["cluster_size"] or 1),
+            affected_customers=affected_custs,
             systemic_alert=bool(row["systemic_alert"]),
             duplicate_reason=dup_reason,
         )
@@ -274,6 +311,41 @@ class ComplaintStore:
         except Exception:
             rec_of_val = None
 
+        try:
+            needs_human = bool(row["needs_human"])
+        except Exception:
+            needs_human = False
+
+        try:
+            needs_info = bool(row["needs_info"])
+        except Exception:
+            needs_info = False
+
+        try:
+            agent_trace = _loads(row["agent_trace"], [])
+        except Exception:
+            agent_trace = []
+
+        try:
+            thread_id = row["thread_id"]
+        except Exception:
+            thread_id = None
+
+        try:
+            linked_incident = row["linked_incident"]
+        except Exception:
+            linked_incident = None
+
+        try:
+            priority_score = int(row["priority_score"] or 0)
+        except Exception:
+            priority_score = 0
+
+        try:
+            missing_fields_q = row["missing_fields_question"]
+        except Exception:
+            missing_fields_q = None
+
         import random
 
         return Complaint(
@@ -307,7 +379,14 @@ class ComplaintStore:
             tenant_id=tenant_id,
             rbi_status=compute_rbi_status(received_at, _dt(row["resolved_at"])),
             recurring=rec_val,
-            recurring_of=rec_of_val
+            recurring_of=rec_of_val,
+            needs_human=needs_human,
+            needs_info=needs_info,
+            agent_trace=agent_trace,
+            thread_id=thread_id,
+            linked_incident=linked_incident,
+            priority_score=priority_score,
+            missing_fields_question=missing_fields_q
         )
 
 
@@ -342,16 +421,18 @@ class ComplaintStore:
                     category, severity, sentiment, key_issues, draft_response, status,
                     assigned_agent, sla_deadline, sla_breached, duplicate_of, cluster_id,
                     duplicate_reason, severity_reason, summary, created_at, updated_at, resolved_at, customer_id, transaction_id, source_ref, received_at,
-                    confidence, cluster_size, systemic_alert, escalation_level,
+                    confidence, cluster_size, systemic_alert, affected_customers, escalation_level,
                     escalation_history, communication_history, agent_note,
-                    detected_language, tenant_id, recurring, recurring_of
+                    detected_language, tenant_id, recurring, recurring_of,
+                    needs_human, needs_info, agent_trace, thread_id, linked_incident, priority_score, missing_fields_question
                 ) VALUES (:id,:ticket_id,:parent_ticket_id,:channel,:channel_metadata,:complaint_text,:masked_text,:masked_fields,
                     :category,:severity,:sentiment,:key_issues,:draft_response,:status,
                     :assigned_agent,:sla_deadline,:sla_breached,:duplicate_of,:cluster_id,
                     :duplicate_reason,:severity_reason,:summary,:created_at,:updated_at,:resolved_at,:customer_id,:transaction_id,:source_ref,:received_at,
-                    :confidence,:cluster_size,:systemic_alert,:escalation_level,
+                    :confidence,:cluster_size,:systemic_alert,:affected_customers,:escalation_level,
                     :escalation_history,:communication_history,:agent_note,
-                    :detected_language,:tenant_id,:recurring,:recurring_of)
+                    :detected_language,:tenant_id,:recurring,:recurring_of,
+                    :needs_human,:needs_info,:agent_trace,:thread_id,:linked_incident,:priority_score,:missing_fields_question)
                 """)
             else:
                 upsert_sql = sa_text("""
@@ -360,16 +441,18 @@ class ComplaintStore:
                     category, severity, sentiment, key_issues, draft_response, status,
                     assigned_agent, sla_deadline, sla_breached, duplicate_of, cluster_id,
                     duplicate_reason, severity_reason, summary, created_at, updated_at, resolved_at, customer_id, transaction_id, source_ref, received_at,
-                    confidence, cluster_size, systemic_alert, escalation_level,
+                    confidence, cluster_size, systemic_alert, affected_customers, escalation_level,
                     escalation_history, communication_history, agent_note,
-                    detected_language, tenant_id, recurring, recurring_of
+                    detected_language, tenant_id, recurring, recurring_of,
+                    needs_human, needs_info, agent_trace, thread_id, linked_incident, priority_score, missing_fields_question
                 ) VALUES (:id,:ticket_id,:parent_ticket_id,:channel,:channel_metadata,:complaint_text,:masked_text,:masked_fields,
                     :category,:severity,:sentiment,:key_issues,:draft_response,:status,
                     :assigned_agent,:sla_deadline,:sla_breached,:duplicate_of,:cluster_id,
                     :duplicate_reason,:severity_reason,:summary,:created_at,:updated_at,:resolved_at,:customer_id,:transaction_id,:source_ref,:received_at,
-                    :confidence,:cluster_size,:systemic_alert,:escalation_level,
+                    :confidence,:cluster_size,:systemic_alert,:affected_customers,:escalation_level,
                     :escalation_history,:communication_history,:agent_note,
-                    :detected_language,:tenant_id,:recurring,:recurring_of)
+                    :detected_language,:tenant_id,:recurring,:recurring_of,
+                    :needs_human,:needs_info,:agent_trace,:thread_id,:linked_incident,:priority_score,:missing_fields_question)
                 ON CONFLICT (id) DO UPDATE SET
                     parent_ticket_id=EXCLUDED.parent_ticket_id,
                     channel=EXCLUDED.channel, channel_metadata=EXCLUDED.channel_metadata,
@@ -385,13 +468,21 @@ class ComplaintStore:
                     resolved_at=EXCLUDED.resolved_at, customer_id=EXCLUDED.customer_id,
                     transaction_id=EXCLUDED.transaction_id, confidence=EXCLUDED.confidence,
                     cluster_size=EXCLUDED.cluster_size, systemic_alert=EXCLUDED.systemic_alert,
+                    affected_customers=EXCLUDED.affected_customers,
                     escalation_level=EXCLUDED.escalation_level,
                     escalation_history=EXCLUDED.escalation_history,
                     communication_history=EXCLUDED.communication_history,
                     agent_note=EXCLUDED.agent_note, detected_language=EXCLUDED.detected_language,
                     tenant_id=EXCLUDED.tenant_id,
                     recurring=EXCLUDED.recurring,
-                    recurring_of=EXCLUDED.recurring_of
+                    recurring_of=EXCLUDED.recurring_of,
+                    needs_human=EXCLUDED.needs_human,
+                    needs_info=EXCLUDED.needs_info,
+                    agent_trace=EXCLUDED.agent_trace,
+                    thread_id=EXCLUDED.thread_id,
+                    linked_incident=EXCLUDED.linked_incident,
+                    priority_score=EXCLUDED.priority_score,
+                    missing_fields_question=EXCLUDED.missing_fields_question
                 """)
             conn.execute(upsert_sql, {
                     "id": complaint.id,
@@ -426,6 +517,7 @@ class ComplaintStore:
                     "confidence": complaint.triage.confidence if complaint.triage else 0.75,
                     "cluster_size": complaint.cluster.cluster_size if complaint.cluster else 1,
                     "systemic_alert": int(complaint.cluster.systemic_alert) if complaint.cluster else 0,
+                    "affected_customers": complaint.cluster.affected_customers if complaint.cluster else 1,
                     "escalation_level": complaint.escalation_level.value,
                     "escalation_history": _json([e.model_dump(mode="json") for e in complaint.escalation_history]),
                     "communication_history": _json([h.model_dump(mode="json") for h in complaint.communication_history]),
@@ -434,6 +526,13 @@ class ComplaintStore:
                     "tenant_id": complaint.tenant_id,
                     "recurring": int(complaint.recurring),
                     "recurring_of": complaint.recurring_of,
+                    "needs_human": int(complaint.needs_human),
+                    "needs_info": int(complaint.needs_info),
+                    "agent_trace": _json(complaint.agent_trace),
+                    "thread_id": complaint.thread_id,
+                    "linked_incident": complaint.linked_incident,
+                    "priority_score": complaint.priority_score,
+                    "missing_fields_question": complaint.missing_fields_question,
                 },
             )
             conn.commit()
@@ -457,13 +556,13 @@ class ComplaintStore:
                     sa_text("""
                         UPDATE complaints
                         SET cluster_size = :size,
-                            systemic_alert = :alert
+                            systemic_alert = :alert,
+                            affected_customers = :affected
                         WHERE cluster_id = :cl_id
                     """),
-                    {"size": real_size, "alert": is_systemic, "cl_id": cl_id}
+                    {"size": real_size, "alert": is_systemic, "affected": distinct_customers, "cl_id": cl_id}
                 )
                 conn.commit()
-
         return complaint
 
     def get(self, complaint_id: str) -> Optional[Complaint]:
@@ -739,6 +838,8 @@ class ComplaintStore:
         with self._connect() as conn:
             conn.execute(sa_text("DELETE FROM complaints"))
             conn.execute(sa_text("DELETE FROM transactions"))
+            conn.execute(sa_text("DELETE FROM ledger"))
+            conn.execute(sa_text("DELETE FROM incidents"))
             conn.commit()
         from app.services.clustering import get_clustering_service
         try:
@@ -747,6 +848,96 @@ class ComplaintStore:
             import logging
             logging.getLogger(__name__).warning(f"Error resetting clustering in store.clear: {e}")
 
+    def log_ledger_event(self, complaint_id: str, event: str, actor: str):
+        import hashlib
+        import uuid
+        ts = datetime.utcnow().isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                sa_text("SELECT hash FROM ledger WHERE complaint_id = :cid ORDER BY timestamp DESC LIMIT 1"),
+                {"cid": complaint_id}
+            ).fetchone()
+            prev_hash = row[0] if row else "0" * 64
+            
+            content = f"{prev_hash}{complaint_id}{event}{actor}{ts}"
+            new_hash = hashlib.sha256(content.encode()).hexdigest()
+            
+            conn.execute(
+                sa_text("""
+                    INSERT INTO ledger (id, complaint_id, event, actor, timestamp, prev_hash, hash)
+                    VALUES (:id, :complaint_id, :event, :actor, :timestamp, :prev_hash, :hash)
+                """),
+                {
+                    "id": str(uuid.uuid4()),
+                    "complaint_id": complaint_id,
+                    "event": event,
+                    "actor": actor,
+                    "timestamp": ts,
+                    "prev_hash": prev_hash,
+                    "hash": new_hash
+                }
+            )
+            conn.commit()
+
+    def verify_ledger_chain(self, complaint_id: str) -> bool:
+        import hashlib
+        with self._connect() as conn:
+            cursor = conn.execute(
+                sa_text("SELECT event, actor, timestamp, prev_hash, hash FROM ledger WHERE complaint_id = :cid ORDER BY timestamp ASC"),
+                {"cid": complaint_id}
+            )
+            rows = [dict(r._mapping) for r in cursor.fetchall()]
+            if not rows:
+                return True
+            
+            expected_prev = "0" * 64
+            for r in rows:
+                if r["prev_hash"] != expected_prev:
+                    return False
+                content = f"{r['prev_hash']}{complaint_id}{r['event']}{r['actor']}{r['timestamp']}"
+                computed_hash = hashlib.sha256(content.encode()).hexdigest()
+                if r["hash"] != computed_hash:
+                    return False
+                expected_prev = r["hash"]
+            return True
+
+    def save_incident(self, cluster_id: str, label: str, customer_count: int, ticket_count: int, status: str = "active"):
+        with self._connect() as conn:
+            _is_sqlite = "sqlite" in str(_sa_engine.url)
+            params = {
+                "cluster_id": cluster_id,
+                "label": label,
+                "customer_count": customer_count,
+                "ticket_count": ticket_count,
+                "status": status
+            }
+            if _is_sqlite:
+                conn.execute(sa_text("""
+                    INSERT OR REPLACE INTO incidents (cluster_id, label, customer_count, ticket_count, status)
+                    VALUES (:cluster_id, :label, :customer_count, :ticket_count, :status)
+                """), params)
+            else:
+                conn.execute(sa_text("""
+                    INSERT INTO incidents (cluster_id, label, customer_count, ticket_count, status)
+                    VALUES (:cluster_id, :label, :customer_count, :ticket_count, :status)
+                    ON CONFLICT (cluster_id) DO UPDATE SET
+                        label=EXCLUDED.label, customer_count=EXCLUDED.customer_count,
+                        ticket_count=EXCLUDED.ticket_count, status=EXCLUDED.status
+                """), params)
+            conn.commit()
+
+    def get_incident(self, cluster_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                sa_text("SELECT * FROM incidents WHERE cluster_id = :cid"),
+                {"cid": cluster_id}
+            ).fetchone()
+            return dict(row._mapping) if row else None
+
+    def all_incidents(self) -> list[dict]:
+        with self._connect() as conn:
+            cursor = conn.execute(sa_text("SELECT * FROM incidents ORDER BY customer_count DESC"))
+            return [dict(row._mapping) for row in cursor.fetchall()]
 
 
 _store: Optional[ComplaintStore] = None

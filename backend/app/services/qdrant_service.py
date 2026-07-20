@@ -92,3 +92,55 @@ def search_similar(vector: List[float], limit: int = 5, score_threshold: float =
     except Exception as e:
         logger.warning(f"Failed to search similar vectors in Qdrant: {e}")
         return []
+
+def init_resolved_collection() -> bool:
+    """Creates the resolved_complaints collection in Qdrant if it does not exist."""
+    if not QDRANT_URL:
+        return False
+    try:
+        url = f"{QDRANT_URL}/collections/resolved_complaints"
+        # Check if collection exists
+        res = httpx.get(url, headers=get_headers(), timeout=5.0)
+        if res.status_code == 200:
+            return True
+            
+        # Create collection
+        payload = {
+            "vectors": {
+                "size": VECTOR_DIM,
+                "distance": "Cosine"
+            }
+        }
+        create_res = httpx.put(url, json=payload, headers=get_headers(), timeout=5.0)
+        if create_res.status_code == 200:
+            logger.info("Created Qdrant collection: resolved_complaints")
+            return True
+        else:
+            logger.warning(f"Failed to create Qdrant collection resolved_complaints: {create_res.text}")
+            return False
+    except Exception as e:
+        logger.warning(f"Could not connect to Qdrant at {QDRANT_URL}: {e}")
+        return False
+
+def upsert_resolved_precedent(complaint_id: str, vector: List[float], payload: Dict[str, Any]) -> bool:
+    """Inserts or updates a resolved complaint's vector and payload in Qdrant."""
+    if not QDRANT_URL:
+        return False
+    try:
+        init_resolved_collection()
+        url = f"{QDRANT_URL}/collections/resolved_complaints/points?wait=true"
+        body = {
+            "points": [
+                {
+                    "id": complaint_id,
+                    "vector": vector,
+                    "payload": payload
+                }
+            ]
+        }
+        res = httpx.put(url, json=body, headers=get_headers(), timeout=5.0)
+        return res.status_code == 200
+    except Exception as e:
+        logger.warning(f"Failed to upsert resolved precedent vector to Qdrant: {e}")
+        return False
+

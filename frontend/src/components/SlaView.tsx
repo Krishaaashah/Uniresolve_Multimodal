@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, Clock, ShieldAlert, Timer } from "lucide-react";
+import { AlertCircle, Clock, HelpCircle, ShieldAlert, Timer } from "lucide-react";
 import SlaProgressBar from "./SlaProgressBar";
 
 interface SlaViewProps {
@@ -37,12 +37,19 @@ export default function SlaView({ complaints, stats, onInspect }: SlaViewProps) 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Breached */}
         <Card className="border-l-4 border-l-rose-500 shadow-sm">
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">SLA Breached</span>
-            <CardTitle className="text-3xl font-extrabold text-rose-600">{breached.length}</CardTitle>
+            <div className="group relative inline-block cursor-pointer select-none">
+              <HelpCircle className="h-3.5 w-3.5 text-slate-400 hover:text-slate-600" />
+              <div className="absolute right-0 bottom-full mb-2 w-72 rounded-lg bg-slate-900 p-2.5 text-[11px] font-semibold leading-normal text-white shadow-xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-200 z-50">
+                SLA deadline = received_at + SLA_HOURS (from category config). ON_TRACK until 80% of the window is used, AT_RISK in the final 20%, BREACHED past deadline. Separate RBI clock: within &le;20 days, approaching &le;30, ombudsman-eligible &gt;30 days.
+                <div className="absolute right-1.5 top-full border-4 border-transparent border-t-slate-900" />
+              </div>
+            </div>
           </CardHeader>
-          <CardContent>
-            <CardDescription className="text-xs">Requires immediate supervisor intervention</CardDescription>
+          <CardContent className="pt-0">
+            <CardTitle className="text-3xl font-extrabold text-rose-600">{breached.length}</CardTitle>
+            <CardDescription className="text-xs mt-1">Requires immediate supervisor intervention</CardDescription>
           </CardContent>
         </Card>
 

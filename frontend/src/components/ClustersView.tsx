@@ -23,6 +23,8 @@ export default function ClustersView({ complaints, onSelectCategory }: ClustersV
   const [loading, setLoading] = useState(true);
   const [clusters, setClusters] = useState<ClusterNode[]>([]);
   const [bubbles, setBubbles] = useState<PhysicsBubble[]>([]);
+  const [semanticClusters, setSemanticClusters] = useState<any[]>([]);
+  const [expandedCluster, setExpandedCluster] = useState<string | null>(null);
 
   const fetchClustersData = async () => {
     setLoading(true);
@@ -33,10 +35,14 @@ export default function ClustersView({ complaints, onSelectCategory }: ClustersV
       }
       setClusters(data);
       initializePhysics(data);
+
+      const semData = await api.getSemanticClusters();
+      setSemanticClusters(semData || []);
     } catch (e) {
       const fallback = buildMockClusters(complaints);
       setClusters(fallback);
       initializePhysics(fallback);
+      setSemanticClusters([]);
     } finally {
       setLoading(false);
     }
@@ -249,6 +255,131 @@ export default function ClustersView({ complaints, onSelectCategory }: ClustersV
           </div>
         </Card>
       </div>
+
+      {/* Semantic Clusters Analysis Section */}
+      <Card className="shadow-sm border-slate-200 p-5">
+        <div className="flex items-center justify-between mb-4 select-none">
+          <h3 className="text-md font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
+            <Network className="h-5 w-5 text-blue-600 animate-pulse" /> Semantic Cluster Diagnostics
+          </h3>
+          <span className="text-xs text-slate-400 font-semibold">
+            Grouped by deep sentence-BERT context vectors (similarity threshold 0.88)
+          </span>
+        </div>
+        
+        {semanticClusters.length > 0 ? (
+          <div className="space-y-3">
+            {semanticClusters.map((cluster) => {
+              const isExpanded = expandedCluster === cluster.cluster_id;
+              
+              // Determine badge variant
+              let badgeText = "SINGLETON";
+              let badgeClass = "bg-slate-100 text-slate-700 border-slate-200";
+              if (cluster.affected_customers >= 5) {
+                badgeText = "SYSTEMIC OUTAGE";
+                badgeClass = "bg-rose-100 text-rose-700 border-rose-200 font-extrabold animate-pulse";
+              } else if (cluster.cluster_size > 1) {
+                badgeText = "REPEAT ISSUES";
+                badgeClass = "bg-amber-100 text-amber-700 border-amber-200 font-extrabold";
+              }
+
+              const maskCustomer = (cId: string = "") => {
+                if (!cId) return "Anonymous";
+                if (cId.length <= 4) return cId;
+                return cId.substring(0, 2) + "***" + cId.substring(cId.length - 2);
+              };
+
+              return (
+                <div 
+                  key={cluster.cluster_id}
+                  className="border border-slate-205 rounded-lg overflow-hidden transition-all duration-200 bg-white"
+                >
+                  {/* Cluster Row Header */}
+                  <div 
+                    onClick={() => setExpandedCluster(isExpanded ? null : cluster.cluster_id)}
+                    className="p-4 bg-slate-50/50 hover:bg-slate-50 cursor-pointer flex flex-wrap items-center justify-between gap-4 select-none"
+                  >
+                    <div className="flex items-center gap-3.5 flex-wrap">
+                      <Badge className={`text-[10px] uppercase font-black px-2.5 py-0.5 border ${badgeClass}`} variant="outline">
+                        {badgeText}
+                      </Badge>
+                      <span className="text-xs font-black text-slate-500 font-mono">
+                        ID: {cluster.cluster_id.substring(0, 8).toUpperCase()}
+                      </span>
+                      <span className="text-xs font-bold text-slate-800">
+                        Category: <span className="text-blue-600">{cluster.dominant_category}</span>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-4 text-xs font-bold text-slate-500">
+                      <span>{cluster.cluster_size} tickets</span>
+                      <span>&bull;</span>
+                      <span>{cluster.affected_customers} customers</span>
+                      <span className="text-slate-300">|</span>
+                      <span className="text-blue-600 hover:underline">
+                        {isExpanded ? "Collapse" : "Expand"} &rarr;
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Cluster Members Expandable Area */}
+                  {isExpanded && (
+                    <div className="border-t border-slate-200 p-4 bg-white space-y-3">
+                      {/* Dominant Category Timestamps & Snippets */}
+                      <div className="text-[11px] font-semibold text-slate-400 flex gap-4 uppercase select-none pb-2 border-b border-slate-100">
+                        <span>First raised: {cluster.first_raised ? new Date(cluster.first_raised).toLocaleString() : "N/A"}</span>
+                        <span>&bull;</span>
+                        <span>Latest raised: {cluster.last_raised ? new Date(cluster.last_raised).toLocaleString() : "N/A"}</span>
+                      </div>
+
+                      {/* Members list */}
+                      <div className="space-y-2">
+                        {cluster.members.map((m: any) => (
+                          <div 
+                            key={m.id} 
+                            className="p-3 bg-slate-50/30 border border-slate-150 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                          >
+                            <div className="space-y-1.5 max-w-[70%]">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-extrabold text-blue-600">{m.ticket_id || "TKT-PENDING"}</span>
+                                <Badge className="bg-slate-100 text-slate-500 hover:bg-slate-100 text-[9px] font-bold">
+                                  Customer: {maskCustomer(m.customer_id)}
+                                </Badge>
+                                {m.relationship_tag && (
+                                  <Badge className="bg-blue-50 text-blue-700 hover:bg-blue-50 border border-blue-200 text-[9px] font-black uppercase">
+                                    {m.relationship_tag.replace("_", " ")}
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-slate-600 font-medium italic">
+                                &ldquo;{m.masked_text}&rdquo;
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-3 self-end md:self-auto select-none">
+                              <Badge className={`text-[10px] font-extrabold uppercase hover:bg-transparent ${
+                                m.status === "resolved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                                m.status === "escalated" ? "bg-rose-50 text-rose-700 border-rose-200 animate-pulse" :
+                                "bg-amber-50 text-amber-700 border-amber-200"
+                              }`} variant="outline">
+                                {m.status.replace("_", " ")}
+                              </Badge>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="py-8 text-center text-slate-400 text-xs font-semibold select-none">
+            No clusters loaded. Check backend server and index health.
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

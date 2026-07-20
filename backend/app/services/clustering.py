@@ -117,160 +117,146 @@ class ClusteringService:
             recurring = False
             recurring_of = None
 
-            # Branch 1: Transaction-Based
+            # Compute embedding once
+            vec = self._encode(text)
+            candidates = []
+
+            # 1. Exact transaction ID match check (as a prioritized check if customer_id and transaction_id are present)
+            exact_match_ticket = None
             if customer_id and transaction_id:
                 try:
                     all_complaints = store.all()
-                    matched_ticket = None
                     for c in all_complaints:
                         if c.customer_id == customer_id and c.transaction_id == transaction_id and c.id != complaint_id:
-                            matched_ticket = c
+                            exact_match_ticket = c
                             break
                     
-                    if matched_ticket:
-                        # If matched ticket is a duplicate, resolve to its primary parent ticket
-                        if matched_ticket.parent_ticket_id:
+                    if exact_match_ticket:
+                        # Resolve matched ticket to primary parent if it is a duplicate
+                        if exact_match_ticket.parent_ticket_id:
                             for c in all_complaints:
-                                if c.ticket_id == matched_ticket.parent_ticket_id:
-                                    matched_ticket = c
+                                if c.ticket_id == exact_match_ticket.parent_ticket_id:
+                                    exact_match_ticket = c
                                     break
-
-                        # Recurrence Guard: check if the matched ticket is resolved
-                        from app.models.complaint import ComplaintStatus
-                        if matched_ticket.status == ComplaintStatus.RESOLVED:
-                            recurring = True
-                            recurring_of = matched_ticket.ticket_id
-                            duplicate_reason = "Re-reported transaction after resolution."
-                            cluster_id = str(uuid.uuid4())
-                        else:
-                            is_duplicate = True
-                            matched_complaint_id = matched_ticket.id
-                            duplicate_reason = "exact_id"
-                            cluster_id = matched_ticket.cluster.cluster_id if matched_ticket.cluster else None
                 except Exception as e:
                     logger.warning(f"Error checking exact transaction ID duplicate: {e}")
-                
-                if not cluster_id:
-                    cluster_id = str(uuid.uuid4())
 
-            # Branch 2: Non-Transaction-Based
-            else:
-                # Option A: Qdrant Search
+            # 2. Retrieve semantic search candidates
+            if vec is not None:
                 if self.use_qdrant and self.qdrant_ready:
-                    vec = self._encode(text)
-                    if vec is not None:
+                    try:
                         vec_list = vec.tolist()[0]
                         from app.services import qdrant_service
                         results = qdrant_service.search_similar(vec_list, limit=10, score_threshold=SIMILARITY_THRESHOLD)
-                        seven_days_ago = datetime.utcnow() - timedelta(days=7)
-                        
                         for point in results:
-                            potential_duplicate_id = point["id"]
-                            payload = point.get("payload", {})
-                            potential_cluster_id = payload.get("cluster_id")
-                            
-                            matched_ticket = store.get(potential_duplicate_id)
-                            if matched_ticket:
-                                if matched_ticket.parent_ticket_id:
-                                    for c in store.all():
-                                        if c.ticket_id == matched_ticket.parent_ticket_id:
-                                            matched_ticket = c
-                                            potential_cluster_id = matched_ticket.cluster.cluster_id if matched_ticket.cluster else None
-                                            break
-
-                                if (matched_ticket.customer_id == customer_id and 
-                                    matched_ticket.received_at >= seven_days_ago and 
-                                    matched_ticket.id != complaint_id):
-                                    from app.models.complaint import ComplaintStatus
-                                    if matched_ticket.status == ComplaintStatus.RESOLVED:
-                                        recurring = True
-                                        recurring_of = matched_ticket.ticket_id
-                                        duplicate_reason = "Recurring issue for same customer (previous ticket resolved)."
-                                        cluster_id = str(uuid.uuid4())
-                                    else:
-                                        is_duplicate = True
-                                        matched_complaint_id = matched_ticket.id
-                                        duplicate_reason = "semantic"
-                                        cluster_id = potential_cluster_id
-                                    break
-                
-                # Option B: FAISS Fallback
+                            candidates.append({
+                                "id": point["id"],
+                                "score": point["score"]
+                            })
+                    except Exception as e:
+                        logger.warning(f"Error searching Qdrant: {e}")
                 else:
                     if self.index is not None and self.healthy and len(self.id_map) > 0:
-                        vec = self._encode(text)
-                        if vec is not None:
-                            # Search up to 10 neighbors to find if any meet criteria
+                        try:
                             distances, indices = self.index.search(vec, k=min(10, len(self.id_map)))
-                            seven_days_ago = datetime.utcnow() - timedelta(days=7)
-                            
                             for rank in range(min(10, len(self.id_map))):
                                 score = float(distances[0][rank])
                                 idx = int(indices[0][rank])
-                                if idx < 0 or idx >= len(self.id_map):
-                                    continue
-                                    
-                                if score >= SIMILARITY_THRESHOLD:
-                                    potential_duplicate_id = self.id_map[idx]
-                                    potential_cluster_id = self.cluster_map.get(potential_duplicate_id)
-                                    
-                                    matched_ticket = store.get(potential_duplicate_id)
-                                    if matched_ticket:
-                                        # If matched ticket is a duplicate, resolve to its primary parent ticket
-                                        if matched_ticket.parent_ticket_id:
-                                            for c in store.all():
-                                                if c.ticket_id == matched_ticket.parent_ticket_id:
-                                                    matched_ticket = c
-                                                    potential_cluster_id = matched_ticket.cluster.cluster_id if matched_ticket.cluster else None
-                                                    break
+                                if idx >= 0 and idx < len(self.id_map) and score >= SIMILARITY_THRESHOLD:
+                                    candidates.append({
+                                        "id": self.id_map[idx],
+                                        "score": score
+                                    })
+                        except Exception as e:
+                            logger.warning(f"Error searching FAISS: {e}")
 
-                                        if (matched_ticket.customer_id == customer_id and 
-                                            matched_ticket.received_at >= seven_days_ago and 
-                                            matched_ticket.id != complaint_id):
-                                            # Recurrence Guard: check if matched ticket is resolved
-                                            from app.models.complaint import ComplaintStatus
-                                            if matched_ticket.status == ComplaintStatus.RESOLVED:
-                                                recurring = True
-                                                recurring_of = matched_ticket.ticket_id
-                                                duplicate_reason = "Recurring issue for same customer (previous ticket resolved)."
-                                                cluster_id = str(uuid.uuid4())
-                                            else:
-                                                is_duplicate = True
-                                                matched_complaint_id = matched_ticket.id
-                                                duplicate_reason = "semantic"
-                                                cluster_id = potential_cluster_id
-                                            break
-                                            
+            # 3. Classify relation
+            from app.models.complaint import ComplaintStatus
+            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+
+            if exact_match_ticket:
+                # Rule 1 & 2: Same customer + same transaction
+                cluster_id = exact_match_ticket.cluster.cluster_id if exact_match_ticket.cluster else None
+                if exact_match_ticket.status == ComplaintStatus.RESOLVED:
+                    recurring = True
+                    recurring_of = exact_match_ticket.ticket_id
+                    duplicate_reason = "exact_id"
+                else:
+                    is_duplicate = True
+                    matched_complaint_id = exact_match_ticket.id
+                    duplicate_reason = "exact_id"
+            else:
+                same_cust_match = None
+                diff_cust_match = None
+                
+                for cand in candidates:
+                    matched_ticket = store.get(cand["id"])
+                    if not matched_ticket or matched_ticket.id == complaint_id:
+                        continue
+                    
+                    # Resolve matched ticket to primary parent if it is a duplicate
+                    if matched_ticket.parent_ticket_id:
+                        for c in store.all():
+                            if c.ticket_id == matched_ticket.parent_ticket_id:
+                                matched_ticket = c
+                                break
+
+                    is_same_customer = (customer_id is not None and matched_ticket.customer_id == customer_id)
+
+                    if is_same_customer:
+                        if matched_ticket.received_at >= seven_days_ago:
+                            same_cust_match = matched_ticket
+                            break
+                    else:
+                        if not diff_cust_match:
+                            diff_cust_match = matched_ticket
+
+                if same_cust_match:
+                    cluster_id = same_cust_match.cluster.cluster_id if same_cust_match.cluster else None
+                    if same_cust_match.status == ComplaintStatus.RESOLVED:
+                        recurring = True
+                        recurring_of = same_cust_match.ticket_id
+                        duplicate_reason = "semantic_same_customer"
+                    else:
+                        is_duplicate = True
+                        matched_complaint_id = same_cust_match.id
+                        duplicate_reason = "semantic_same_customer"
+                elif diff_cust_match:
+                    cluster_id = diff_cust_match.cluster.cluster_id if diff_cust_match.cluster else None
+                    is_duplicate = False
+                    duplicate_reason = "systemic_similarity"
+
             if not cluster_id:
                 cluster_id = str(uuid.uuid4())
 
             # Register embedding in Qdrant (if active) or FAISS index (if healthy)
-            if self.use_qdrant and self.qdrant_ready:
-                vec = self._encode(text)
-                if vec is not None:
-                    vec_list = vec.tolist()[0]
-                    from app.services import qdrant_service
-                    qdrant_service.upsert_vector(
-                        complaint_id=complaint_id,
-                        vector=vec_list,
-                        payload={
-                            "cluster_id": cluster_id,
-                            "customer_id": customer_id
-                        }
-                    )
-                    self.cluster_map[complaint_id] = cluster_id
-                    self.cluster_counts[cluster_id] = self.cluster_counts.get(cluster_id, 0) + 1
-            else:
-                if self.index is not None and self.healthy:
-                    vec = self._encode(text)
-                    if vec is not None:
-                        self.index.add(vec)
-                        self.id_map.append(complaint_id)
+            if vec is not None:
+                if self.use_qdrant and self.qdrant_ready:
+                    try:
+                        vec_list = vec.tolist()[0]
+                        from app.services import qdrant_service
+                        qdrant_service.upsert_vector(
+                            complaint_id=complaint_id,
+                            vector=vec_list,
+                            payload={
+                                "cluster_id": cluster_id,
+                                "customer_id": customer_id
+                            }
+                        )
                         self.cluster_map[complaint_id] = cluster_id
-                        self.cluster_counts[cluster_id] = self.cluster_counts.get(cluster_id, 0) + 1
-                        self._save_index()
+                    except Exception as e:
+                        logger.warning(f"Error registering vector in Qdrant: {e}")
                 else:
-                    self.cluster_map[complaint_id] = cluster_id
-                    self.cluster_counts[cluster_id] = self.cluster_counts.get(cluster_id, 0) + 1
+                    if self.index is not None and self.healthy:
+                        try:
+                            self.index.add(vec)
+                            self.id_map.append(complaint_id)
+                            self.cluster_map[complaint_id] = cluster_id
+                            self._save_index()
+                        except Exception as e:
+                            logger.warning(f"Error registering vector in FAISS: {e}")
+                    else:
+                        self.cluster_map[complaint_id] = cluster_id
 
             # Retrieve all registered complaints belonging to this cluster
             cluster_complaints = [c for c in store.all() if c.cluster and c.cluster.cluster_id == cluster_id]
@@ -278,18 +264,29 @@ class ClusteringService:
             if customer_id:
                 unique_customers.add(customer_id)
 
-            cluster_size = self.cluster_counts[cluster_id]
+            cluster_size = len(cluster_complaints) + 1
+            affected_customers = len(unique_customers)
+            self.cluster_counts[cluster_id] = cluster_size
+
             # Alert is only systemic if it affects 5 or more unique customers
-            systemic_alert = len(unique_customers) >= CLUSTER_ALERT_THRESHOLD
+            systemic_alert = affected_customers >= CLUSTER_ALERT_THRESHOLD
 
             if systemic_alert:
-                logger.warning(f"SYSTEMIC ALERT: Cluster {cluster_id[:8]} has {cluster_size} similar complaints representing {len(unique_customers)} distinct customers!")
+                logger.warning(f"SYSTEMIC ALERT: Cluster {cluster_id[:8]} has {cluster_size} similar complaints representing {affected_customers} distinct customers!")
+                from collections import Counter
+                cats = [c.triage.category.value for c in cluster_complaints if c.triage]
+                dominant_cat = Counter(cats).most_common(1)[0][0] if cats else "General Issue"
+                issues = [c.triage.key_issue for c in cluster_complaints if c.triage and c.triage.key_issue]
+                dominant_issue = Counter(issues).most_common(1)[0][0] if issues else "Multiple related failures"
+                label = f"{dominant_cat} outage: {dominant_issue}"
+                store.save_incident(cluster_id, label, affected_customers, cluster_size)
 
             return DuplicateCluster(
                 cluster_id=cluster_id,
                 is_duplicate=is_duplicate,
                 duplicate_of=matched_complaint_id,
                 cluster_size=cluster_size,
+                affected_customers=affected_customers,
                 systemic_alert=systemic_alert,
                 duplicate_reason=duplicate_reason,
                 recurring=recurring,

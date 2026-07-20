@@ -113,288 +113,195 @@ def build_complaint(raw, channel, category, severity, status, days_ago, sentimen
 def main():
     store = get_store()
     store.clear()
-    dup_cluster = str(uuid4())
-    rows = [
-        # Hindi vernacular complaints
-        ("मेरा यूपीआई ट्रांसफर फेल हो गया है लेकिन मेरे बैंक खाते से 5000 रुपये कट गए हैं। कृपया वापस करें।", Channel.APP, Category.UPI, Severity.CRITICAL, ComplaintStatus.PENDING, 0, Sentiment.ANGRY, None, None, "40012345", None, None, "UBI Subsidiary", "400123450001"),
-
-        # PII-heavy complaints
-        ("Dear Union Bank, this is Aarav Sharma. Fraud transaction on my Debit Card 4532-7102-8394-1025. Please block it immediately. My Aadhaar is 8293-1029-4820 and Mobile is +91-9820192837. Account number 9102837465.", Channel.WEB, Category.CREDIT_CARD, Severity.CRITICAL, ComplaintStatus.PENDING, 2, Sentiment.ANGRY, None, None, "30030482", None, None, "Union Bank", "300304820001"),
-        
-        # 31+ days old complaints (for 30-day regulatory clock check)
-        ("I have been waiting for my home loan foreclosure letter since May 1st. It has been more than 35 days. No response from Branch Manager.", Channel.BRANCH, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING, 35, Sentiment.FRUSTRATED, None, None, "50012345", None, None, "Union Bank", "500123450001"),
-        ("Insurance policy activation is pending for 45 days. My mobile number is 9876543210. Reference claim is 98765.", Channel.EMAIL, Category.INSURANCE, Severity.MEDIUM, ComplaintStatus.PENDING, 45, Sentiment.FRUSTRATED, None, None, "60012345", None, None, "Union Bank", "600123450001"),
-        
-        # Legacy rows
-        ("Fraudulent credit card charge of Rs 18,500 appeared today. I did not authorise this transaction.", Channel.WEB, Category.CREDIT_CARD, Severity.CRITICAL, ComplaintStatus.ESCALATED, 1, Sentiment.ANGRY, None, None, "30030482", None, None, "Union Bank", "300304820001"),
-        ("My mobile banking app shows a successful transfer but the beneficiary has not received money.", Channel.APP, Category.MOBILE_BANKING, Severity.CRITICAL, ComplaintStatus.PENDING, 0, Sentiment.ANGRY, dup_cluster, None, "10010245", "app_error.png", "image/png", "Union Bank", "100102450001"),
-        ("Mobile banking transfer succeeded on screen but beneficiary did not receive the amount.", Channel.APP, Category.MOBILE_BANKING, Severity.HIGH, ComplaintStatus.PENDING, 0, Sentiment.FRUSTRATED, dup_cluster, "seed-duplicate", "10010245", None, None, "Union Bank", "100102450001"),
-        ("Home loan EMI was debited twice this month and I need a refund urgently.", Channel.EMAIL, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING, 2, Sentiment.ANGRY, None, None, "20020591", None, None, "Union Bank", "200205910001"),
-        ("Credit card reward points vanished after statement generation.", Channel.SOCIAL, Category.CREDIT_CARD, Severity.HIGH, ComplaintStatus.PENDING, 3, Sentiment.FRUSTRATED, None, None, "20020591", None, None, "Union Bank", "200205910002"),
-        ("Branch staff could not update my nominee details despite two visits.", Channel.BRANCH, Category.ACCOUNT, Severity.HIGH, ComplaintStatus.ESCALATED, 4, Sentiment.FRUSTRATED, None, None, "30030482", None, None, "Union Bank", "300304820002"),
-        ("Insurance claim has been pending for 20 days with no clear update.", Channel.EMAIL, Category.INSURANCE, Severity.HIGH, ComplaintStatus.PENDING, 5, Sentiment.FRUSTRATED, None, None, "60012345", None, None, "Union Bank", "600123450002"),
-        ("Account statement download fails from web portal every time.", Channel.WEB, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING, 6, Sentiment.NEUTRAL, None, None, "40012345", None, None, "Union Bank", "400123450002"),
-        ("Investment portfolio value is not refreshing in the app.", Channel.APP, Category.INVESTMENT, Severity.MEDIUM, ComplaintStatus.PENDING, 7, Sentiment.NEUTRAL, None, None, "10010245", None, None, "Union Bank", "100102450002"),
-        ("Transcribed Audio: IVR disconnected me three times before connecting to an agent.", Channel.IVR, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING, 8, Sentiment.FRUSTRATED, None, None, "50012345", "voice_note.wav", "audio/wav", "Union Bank", "500123450002"),
-        ("Credit card annual fee waiver request has no response.", Channel.EMAIL, Category.CREDIT_CARD, Severity.MEDIUM, ComplaintStatus.RESOLVED, 9, Sentiment.NEUTRAL, None, None, "30030482", None, None, "Union Bank", "300304820003"),
-        ("Loan foreclosure letter not available at branch.", Channel.BRANCH, Category.LOAN, Severity.MEDIUM, ComplaintStatus.RESOLVED, 10, Sentiment.NEUTRAL, None, None, "50012345", None, None, "Union Bank", "500123450003"),
-        ("Insurance premium receipt is missing from email.", Channel.WEB, Category.INSURANCE, Severity.MEDIUM, ComplaintStatus.RESOLVED, 11, Sentiment.NEUTRAL, None, None, "60012345", None, None, "Union Bank", "600123450003"),
-        ("Mobile banking fingerprint login stopped working after update.", Channel.APP, Category.MOBILE_BANKING, Severity.MEDIUM, ComplaintStatus.ESCALATED, 12, Sentiment.FRUSTRATED, None, None, "10010245", None, None, "Union Bank", "100102450003"),
-        ("Mutual fund SIP date change request is still pending.", Channel.BRANCH, Category.INVESTMENT, Severity.MEDIUM, ComplaintStatus.PENDING, 13, Sentiment.NEUTRAL, None, None, "20020591", None, None, "Union Bank", "200205910003"),
-        ("Please update my email address for account alerts.", Channel.BRANCH, Category.ACCOUNT, Severity.LOW, ComplaintStatus.RESOLVED, 3, Sentiment.NEUTRAL, None, None, "30030482", None, None, "Union Bank", "300304820004"),
-        ("Need information about personal loan part payment charges.", Channel.IVR, Category.LOAN, Severity.LOW, ComplaintStatus.RESOLVED, 4, Sentiment.NEUTRAL, None, None, "50012345", None, None, "Union Bank", "500123450004"),
-        ("Credit card PIN generation instructions are confusing.", Channel.WEB, Category.CREDIT_CARD, Severity.LOW, ComplaintStatus.PENDING, 5, Sentiment.NEUTRAL, None, None, "30030482", None, None, "Union Bank", "300304820005"),
-        ("Insurance policy document download link expired.", Channel.EMAIL, Category.INSURANCE, Severity.LOW, ComplaintStatus.RESOLVED, 6, Sentiment.NEUTRAL, None, None, "60012345", None, None, "Union Bank", "600123450004"),
-        ("Investment tax statement needs clearer labels.", Channel.SOCIAL, Category.INVESTMENT, Severity.LOW, ComplaintStatus.ESCALATED, 7, Sentiment.NEUTRAL, None, None, "10010245", None, None, "Union Bank", "100102450004"),
+    
+    # 1. Seed specific transactions for the customers
+    transactions = [
+        {
+            "transaction_id": "TXN-10001-A",
+            "customer_id": "CUST-10001",
+            "amount": "₹5,000.00",
+            "status": "failed",
+            "date": (datetime.utcnow() - timedelta(days=4)).date().isoformat(),
+            "channel": "upi",
+            "description": "UPI/Transfer/Failed"
+        },
+        {
+            "transaction_id": "TXN-10001-B",
+            "customer_id": "CUST-10001",
+            "amount": "₹12,000.00",
+            "status": "success",
+            "date": (datetime.utcnow() - timedelta(days=2)).date().isoformat(),
+            "channel": "app",
+            "description": "Credit card annual bill payment"
+        },
+        {
+            "transaction_id": "TXN-10002-A",
+            "customer_id": "CUST-10002",
+            "amount": "₹10,000.00",
+            "status": "failed",
+            "date": (datetime.utcnow() - timedelta(days=5)).date().isoformat(),
+            "channel": "atm",
+            "description": "ATM/Cash Dispense/Failed"
+        },
+        {
+            "transaction_id": "TXN-10003-A",
+            "customer_id": "CUST-10003",
+            "amount": "₹8,500.00",
+            "status": "success",
+            "date": (datetime.utcnow() - timedelta(days=2)).date().isoformat(),
+            "channel": "web",
+            "description": "Online Shopping payment"
+        },
+        {
+            "transaction_id": "TXN-10005-A",
+            "customer_id": "CUST-10005",
+            "amount": "₹3,000.00",
+            "status": "failed",
+            "date": (datetime.utcnow() - timedelta(days=2)).date().isoformat(),
+            "channel": "upi",
+            "description": "UPI/GPay transfer"
+        }
     ]
+    for tx in transactions:
+        store.save_transaction(tx)
+    print(f"Seeded {len(transactions)} transactions into database")
+
+    # 2. Seed exactly 15 complaints with strict customer ID and transaction ID properties
+    rows = [
+        # 1. Transaction-based, App, UPI, Critical, Pending, 4 days ago, CUST-10001, TXN-10001-A
+        (
+            "Dear Union Bank, my UPI payment of Rs 5000 failed but amount was debited from my account. Please reverse it.",
+            Channel.APP, Category.UPI, Severity.CRITICAL, ComplaintStatus.PENDING,
+            4, Sentiment.ANGRY, None, None, "CUST-10001",
+            None, None, "Union Bank", "TXN-10001-A"
+        ),
+        # 2. Transaction-based, Web, UPI, High, Pending, 3 days ago, CUST-10001, TXN-10001-A (Exact same customer + same txn ID = exact duplicate)
+        (
+            "Help! The UPI transfer of Rs 5000 is still failed but my account is debited. Revert ASAP.",
+            Channel.WEB, Category.UPI, Severity.HIGH, ComplaintStatus.PENDING,
+            3, Sentiment.ANGRY, None, None, "CUST-10001",
+            None, None, "Union Bank", "TXN-10001-A"
+        ),
+        # 3. Transaction-based, App, Mobile Banking, High, Pending, 5 days ago, CUST-10002, TXN-10002-A (Multimodal: Image)
+        (
+            "I tried to transfer money but got this error screen. The recipient did not get the money.",
+            Channel.APP, Category.MOBILE_BANKING, Severity.HIGH, ComplaintStatus.PENDING,
+            5, Sentiment.FRUSTRATED, None, None, "CUST-10002",
+            "app_error.png", "image/png", "Union Bank", "TXN-10002-A"
+        ),
+        # 4. Transaction-based, IVR, Account, High, Pending, 6 days ago, CUST-10002, TXN-10002-A (Multimodal: Audio, Exact same customer + same txn ID = exact duplicate of 3)
+        (
+            "Transcribed Audio: I was at the Airport ATM trying to withdraw cash, the machine made noise but no money came out, and my account was debited.",
+            Channel.IVR, Category.ACCOUNT, Severity.HIGH, ComplaintStatus.PENDING,
+            6, Sentiment.FRUSTRATED, None, None, "CUST-10002",
+            "voice_note.wav", "audio/wav", "Union Bank", "TXN-10002-A"
+        ),
+        # 5. Transaction-based, App, UPI, Critical, Pending, 2 days ago, CUST-10005, TXN-10005-A (Systemic similarity to complaint 1 - different customer, similar UPI issue)
+        (
+            "My UPI transfer of Rs 3000 to my friend failed but my account was debited. Please credit back.",
+            Channel.APP, Category.UPI, Severity.CRITICAL, ComplaintStatus.PENDING,
+            2, Sentiment.ANGRY, None, None, "CUST-10005",
+            None, None, "Union Bank", "TXN-10005-A"
+        ),
+        # 6. Non-transaction-based, Branch, Account, Medium, Pending, 4 days ago, CUST-10003, no txn
+        (
+            "I visited the branch to update my nominee details, but the branch manager was extremely rude and refused to process it.",
+            Channel.BRANCH, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING,
+            4, Sentiment.FRUSTRATED, None, None, "CUST-10003",
+            None, None, "Union Bank", None
+        ),
+        # 7. Non-transaction-based, Branch, Account, Medium, Pending, 2 days ago, CUST-10003, no txn (Semantic same customer duplicate of 6 within 7 days)
+        (
+            "Nominee details update request was rejected by branch staff. Why is this service so slow?",
+            Channel.BRANCH, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING,
+            2, Sentiment.FRUSTRATED, None, None, "CUST-10003",
+            None, None, "Union Bank", None
+        ),
+        # 8. Non-transaction-based, Web, Account, Medium, Pending, 3 days ago, CUST-10004, no txn (Multimodal: Image)
+        (
+            "Screenshot of the error when trying to update my KYC documents in the portal. It keeps loading forever.",
+            Channel.WEB, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING,
+            3, Sentiment.NEUTRAL, None, None, "CUST-10004",
+            "app_error.png", "image/png", "Union Bank", None
+        ),
+        # 9. Non-transaction-based, IVR, Account, Medium, Pending, 1 day ago, CUST-10004, no txn (Multimodal: Audio, Semantic same customer duplicate of 8 within 7 days)
+        (
+            "Transcribed Audio: Yes, I want to report that the KYC verification is pending for over two weeks now. I submitted all forms.",
+            Channel.IVR, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING,
+            1, Sentiment.FRUSTRATED, None, None, "CUST-10004",
+            "voice_note.wav", "audio/wav", "Union Bank", None
+        ),
+        # 10. Transaction-based, Email, Credit Card, High, Pending, 2 days ago, CUST-10001, TXN-10001-B
+        (
+            "My credit card bill was paid for Rs 12,000 but the transaction is showing twice in my credit card statement.",
+            Channel.EMAIL, Category.CREDIT_CARD, Severity.HIGH, ComplaintStatus.PENDING,
+            2, Sentiment.FRUSTRATED, None, None, "CUST-10001",
+            None, None, "Union Bank", "TXN-10001-B"
+        ),
+        # 11. Non-transaction-based, Branch, Account, Medium, Pending, 5 days ago, CUST-10003, no txn (Hindi vernacular)
+        (
+            "मेरा फिक्स्ड डिपॉजिट रिन्यूअल फॉर्म शाखा में जमा करने के बाद भी प्रोसेस नहीं हुआ है। कृपया मदद करें।",
+            Channel.BRANCH, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING,
+            5, Sentiment.FRUSTRATED, None, None, "CUST-10003",
+            None, None, "Union Bank", None
+        ),
+        # 12. Non-transaction-based, App, Loan, Low, Pending, 3 days ago, CUST-10005, no txn
+        (
+            "I want to apply for a personal loan foreclosure letter, but the app shows error code 404 when downloading.",
+            Channel.APP, Category.LOAN, Severity.LOW, ComplaintStatus.PENDING,
+            3, Sentiment.NEUTRAL, None, None, "CUST-10005",
+            None, None, "Union Bank", None
+        ),
+        # 13. Transaction-based, Web, Credit Card, Medium, Pending, 2 days ago, CUST-10003, TXN-10003-A
+        (
+            "I made an online shopping payment of Rs 8500. The payment was successful but I did not receive any OTP confirmation.",
+            Channel.WEB, Category.CREDIT_CARD, Severity.MEDIUM, ComplaintStatus.PENDING,
+            2, Sentiment.NEUTRAL, None, None, "CUST-10003",
+            None, None, "Union Bank", "TXN-10003-A"
+        ),
+        # 14. Non-transaction-based, Email, Loan, High, Pending, 4 days ago, CUST-10002, no txn
+        (
+            "My home loan EMI interest rate was calculated incorrectly this month. It is higher than the agreement.",
+            Channel.EMAIL, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING,
+            4, Sentiment.ANGRY, None, None, "CUST-10002",
+            None, None, "Union Bank", None
+        ),
+        # 15. Non-transaction-based, Social, Mobile Banking, Low, Pending, 1 day ago, CUST-10001, no txn
+        (
+            "My mobile banking password reset link is not receiving on my phone number. Please check SMS gateway.",
+            Channel.SOCIAL, Category.MOBILE_BANKING, Severity.LOW, ComplaintStatus.PENDING,
+            1, Sentiment.NEUTRAL, None, None, "CUST-10001",
+            None, None, "Union Bank", None
+        )
+    ]
+
     saved = []
     for idx, row in enumerate(rows):
         c = build_complaint(*row)
-        if row[7] == dup_cluster and row[8] is None:
-            saved_dup_id = c.id
-        if row[8] == "seed-duplicate":
-            c.cluster.duplicate_of = saved_dup_id
+        
+        # Register in ClusteringService to correctly determine duplicate cluster metadata
+        # and pre-warm/index the FAISS database!
+        from app.services.clustering import get_clustering_service
+        cluster_res = get_clustering_service().check_and_register(
+            c.id,
+            c.masked_text,
+            customer_id=c.customer_id,
+            transaction_id=c.transaction_id
+        )
+        
+        c.cluster = cluster_res
+        c.recurring = cluster_res.recurring
+        c.recurring_of = cluster_res.recurring_of
+        
+        # Connect duplicate of
+        if cluster_res.is_duplicate and cluster_res.duplicate_of:
+            parent_c = store.get(cluster_res.duplicate_of)
+            if parent_c:
+                c.parent_ticket_id = parent_c.parent_ticket_id or parent_c.ticket_id
+        
         saved.append(store.save(c))
 
     print(f"Seeded {len(saved)} complaints into database")
-
-    # Seed transactions
-    transactions = []
-    known_customers = ["40012345", "30030482", "50012345", "60012345", "20020591", "10010245"]
-    channels = ["upi", "atm", "netbanking", "branch", "app"]
-    descriptions = {
-        "upi": ["UPI/GPay/Failed", "UPI/PhonePe/Transfer", "UPI/Zomato/Order", "UPI/AmazonPay/Refund"],
-        "atm": ["ATM/Cash Withdrawal", "ATM/Failed Dispense", "ATM/Balance Enquiry"],
-        "netbanking": ["IMPS/Transfer", "NEFT/Salary", "RTGS/Vendor Pay"],
-        "branch": ["Branch Deposit", "Branch Withdrawal", "DD Issue"],
-        "app": ["App Transfer/Self", "App/Recharge", "App/Bill Pay"]
-    }
-    
-    # Specific transactions for test verification
-    transactions.append({
-        "transaction_id": "400123450001",
-        "customer_id": "40012345",
-        "amount": "₹5,000.00",
-        "status": "failed",
-        "date": "2026-06-29",
-        "channel": "upi",
-        "description": "UPI/GPay/Failed/Rent"
-    })
-    transactions.append({
-        "transaction_id": "300304820001",
-        "customer_id": "30030482",
-        "amount": "₹18,500.00",
-        "status": "failed",
-        "date": "2026-06-28",
-        "channel": "app",
-        "description": "Card/Blocked Alert/Wrong PIN"
-    })
-    transactions.append({
-        "transaction_id": "500123450001",
-        "customer_id": "50012345",
-        "amount": "₹25,000.00",
-        "status": "success",
-        "date": "2026-05-01",
-        "channel": "branch",
-        "description": "Home Loan foreclosure processing fee"
-    })
-    transactions.append({
-        "transaction_id": "600123450001",
-        "customer_id": "60012345",
-        "amount": "₹3,000.00",
-        "status": "failed",
-        "date": "2026-05-15",
-        "channel": "app",
-        "description": "Insurance claim processing payment"
-    })
-    transactions.append({
-        "transaction_id": "100102450001",
-        "customer_id": "10010245",
-        "amount": "₹3,000.00",
-        "status": "failed",
-        "date": "2026-06-30",
-        "channel": "app",
-        "description": "UPI/Transfer/Friend"
-    })
-    transactions.append({
-        "transaction_id": "200205910001",
-        "customer_id": "20020591",
-        "amount": "₹12,000.00",
-        "status": "failed",
-        "date": "2026-06-28",
-        "channel": "app",
-        "description": "EMI Auto-debit retry"
-    })
-    transactions.append({
-        "transaction_id": "200205910002",
-        "customer_id": "20020591",
-        "amount": "₹500.00",
-        "status": "success",
-        "date": "2026-06-27",
-        "channel": "app",
-        "description": "Credit card point redemption fee"
-    })
-    transactions.append({
-        "transaction_id": "300304820002",
-        "customer_id": "30030482",
-        "amount": "₹10,000.00",
-        "status": "success",
-        "date": "2026-06-26",
-        "channel": "branch",
-        "description": "Nominee update processing"
-    })
-    transactions.append({
-        "transaction_id": "600123450002",
-        "customer_id": "60012345",
-        "amount": "₹5,000.00",
-        "status": "failed",
-        "date": "2026-06-25",
-        "channel": "email",
-        "description": "Premium deposit check"
-    })
-    transactions.append({
-        "transaction_id": "400123450002",
-        "customer_id": "40012345",
-        "amount": "₹100.00",
-        "status": "success",
-        "date": "2026-06-24",
-        "channel": "web",
-        "description": "Statement download processing fee"
-    })
-    transactions.append({
-        "transaction_id": "100102450002",
-        "customer_id": "10010245",
-        "amount": "₹1,500.00",
-        "status": "pending",
-        "date": "2026-06-23",
-        "channel": "app",
-        "description": "Mutual fund SIP installment"
-    })
-    transactions.append({
-        "transaction_id": "500123450002",
-        "customer_id": "50012345",
-        "amount": "₹250.00",
-        "status": "success",
-        "date": "2026-06-22",
-        "channel": "ivr",
-        "description": "IVR service query fee"
-    })
-    transactions.append({
-        "transaction_id": "300304820003",
-        "customer_id": "30030482",
-        "amount": "₹0.00",
-        "status": "success",
-        "date": "2026-06-21",
-        "channel": "email",
-        "description": "Credit card annual fee check"
-    })
-    transactions.append({
-        "transaction_id": "500123450003",
-        "customer_id": "50012345",
-        "amount": "₹15,000.00",
-        "status": "success",
-        "date": "2026-06-20",
-        "channel": "branch",
-        "description": "Loan document verification fee"
-    })
-    transactions.append({
-        "transaction_id": "600123450003",
-        "customer_id": "60012345",
-        "amount": "₹2,500.00",
-        "status": "success",
-        "date": "2026-06-19",
-        "channel": "web",
-        "description": "Premium receipt processing"
-    })
-    transactions.append({
-        "transaction_id": "100102450003",
-        "customer_id": "10010245",
-        "amount": "₹0.00",
-        "status": "success",
-        "date": "2026-06-18",
-        "channel": "app",
-        "description": "App biometric update"
-    })
-    transactions.append({
-        "transaction_id": "200205910003",
-        "customer_id": "20020591",
-        "amount": "₹1,000.00",
-        "status": "pending",
-        "date": "2026-06-17",
-        "channel": "branch",
-        "description": "SIP modify request processing"
-    })
-    transactions.append({
-        "transaction_id": "300304820004",
-        "customer_id": "30030482",
-        "amount": "₹0.00",
-        "status": "success",
-        "date": "2026-06-16",
-        "channel": "branch",
-        "description": "Nominee details lookup"
-    })
-    transactions.append({
-        "transaction_id": "500123450004",
-        "customer_id": "50012345",
-        "amount": "₹0.00",
-        "status": "success",
-        "date": "2026-06-15",
-        "channel": "ivr",
-        "description": "Personal loan info call charge"
-    })
-    transactions.append({
-        "transaction_id": "300304820005",
-        "customer_id": "30030482",
-        "amount": "₹100.00",
-        "status": "success",
-        "date": "2026-06-14",
-        "channel": "web",
-        "description": "PIN generation OTP SMS fee"
-    })
-    transactions.append({
-        "transaction_id": "600123450004",
-        "customer_id": "60012345",
-        "amount": "₹0.00",
-        "status": "success",
-        "date": "2026-06-13",
-        "channel": "email",
-        "description": "Policy document check"
-    })
-    transactions.append({
-        "transaction_id": "100102450004",
-        "customer_id": "10010245",
-        "amount": "₹0.00",
-        "status": "success",
-        "date": "2026-06-12",
-        "channel": "social",
-        "description": "Tax statement query logging"
-    })
-    
-    # Generate random rows to total ~75 rows
-    import random
-    random.seed(42)
-    for i in range(1, 71):
-        cust = random.choice(known_customers)
-        channel = random.choice(channels)
-        status = random.choice(["success", "failed", "pending"])
-        amount_val = random.randint(100, 50000)
-        desc = random.choice(descriptions[channel])
-        dt_str = (datetime.utcnow() - timedelta(days=random.randint(0, 30))).date().isoformat()
-        
-        transactions.append({
-            "transaction_id": f"120000000{i:03d}",
-            "customer_id": cust,
-            "amount": f"₹{amount_val:,.2f}",
-            "status": status,
-            "date": dt_str,
-            "channel": channel,
-            "description": f"{desc}/{i}"
-        })
-        
-    for tx in transactions:
-        store.save_transaction(tx)
-        
-    print(f"Seeded {len(transactions)} transactions into database")
 
 
 if __name__ == "__main__":

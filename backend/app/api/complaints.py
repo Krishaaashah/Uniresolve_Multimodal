@@ -142,7 +142,7 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
             else:
                 raise HTTPException(status_code=422, detail="Customer ID is required")
 
-    # Check transaction status on ingestion and validate against the transactions table
+    # Validate Transaction ID belongs to customer
     tx_note = None
     if payload.transaction_id:
         tx = store.get_transaction(payload.transaction_id)
@@ -152,7 +152,6 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
             if tx.get("customer_id") != payload.customer_id:
                 logger.warning(f"Transaction owner mismatch: transaction={payload.transaction_id} (owner={tx.get('customer_id')}), submitted customer_id={payload.customer_id}")
                 raise HTTPException(status_code=422, detail="Transaction does not belong to this customer")
-        
         if tx:
             tx_status = tx.get("status")
             tx_date = tx.get("date") or tx.get("created_at") or "unknown date"
@@ -165,29 +164,45 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
                 tx_note = f"Transaction {payload.transaction_id} of Rs {tx_amount} failed on {tx_date}."
             elif tx_status == "pending":
                 tx_note = f"Transaction {payload.transaction_id} of Rs {tx_amount} is currently pending as of {tx_date}."
-
+            
             if tx_note:
                 payload.raw_text = f"{payload.raw_text}\n\n[Transaction Status Context]: {tx_note}"
                 masked_text = f"{masked_text}\n\n[Transaction Status Context]: {tx_note}"
 
-    # Conserve rate limits for background loops/seeding or spam queries
-    is_seed = payload.channel_metadata.get("seed") is True
-    is_replay = payload.source_ref and payload.source_ref.startswith("replay-")
-    is_spam = is_spam_query(payload.raw_text)
-    skip_ai_draft = is_seed or is_replay or is_spam
+    # Route request to LangGraph Multi-Agent pipeline
+    from app.agents.graph import run_pipeline
+    import re
+    amt = None
+    amt_match = re.search(r"(?:Rs\.?|INR)\s*([\d,]+(?:\.\d{2})?)", payload.raw_text, re.IGNORECASE)
+    if amt_match:
+        try:
+            amt = float(amt_match.group(1).replace(",", ""))
+        except ValueError:
+            pass
 
-    triage_result = get_triage_service().triage(
-        masked_text,
-        skip_ai_draft=skip_ai_draft,
-        transaction_note=tx_note,
+    pipeline_res = run_pipeline(
+        complaint_text=masked_text,
         customer_id=payload.customer_id,
-        transaction_id=payload.transaction_id
+        transaction_ref=payload.transaction_id,
+        amount=amt
     )
-    if is_spam:
-        triage_result.confidence = 0.0
-        triage_result.severity_reason = "Flagged as spam/gibberish by local verification filter."
-        triage_result.suggested_response = "Automatic response generation skipped for unverified query."
-        
+    
+    thread_id = pipeline_res["thread_id"]
+    state = pipeline_res["state"]
+    
+    from app.models.complaint import TriageResult, Sentiment, Severity, SLAStatus
+    triage_result = TriageResult(
+        category=state.get("category") or "general",
+        severity=Severity(state.get("severity") or "medium"),
+        sentiment=Sentiment(state.get("entities", {}).get("sentiment") or "neutral"),
+        key_issue=(state.get("category") or "General") + " issue detected",
+        key_issues=[(state.get("category") or "General") + " issue"],
+        suggested_response=state.get("draft") or "",
+        confidence=0.90,
+        detected_language=state.get("detected_language") or "English",
+        severity_reason=f"CBS Verdict: {state.get('cbs_verdict')}. SLA Status: {state.get('sla_status')}"
+    )
+
     received_at = payload.received_at or datetime.utcnow()
     
     complaint = Complaint(
@@ -201,11 +216,19 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
         source_ref=payload.source_ref,
         received_at=received_at,
         triage=triage_result,
+        needs_human=state.get("needs_human", False),
+        needs_info=state.get("needs_info", False),
+        agent_trace=state.get("agent_trace", []),
+        thread_id=thread_id,
+        linked_incident=state.get("linked_incident"),
+        priority_score=state.get("priority_score", 0),
+        detected_language=state.get("detected_language", "English"),
+        missing_fields_question=state.get("missing_fields_question")
     )
+    
     from app.services.triage import generate_summary
     complaint.summary = generate_summary(masked_text)
     
-    # Save the file using the complaint's unique ID to avoid namespace collisions
     if payload.media_file and payload.media_type:
         from app.services.multimodal import save_multimodal_file
         saved_path = save_multimodal_file(complaint.id, payload.media_file, payload.media_type)
@@ -217,30 +240,68 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
                 "url": saved_path
             })
 
-    complaint.communication_history.extend(
-        [
-            HistoryMessage(author=MessageAuthor.CUSTOMER, author_name="Customer", content=payload.raw_text, timestamp=received_at),
-            HistoryMessage(
-                author=MessageAuthor.SYSTEM,
-                author_name="System",
-                content=f"Auto-triaged: {triage_result.category.value} | {triage_result.severity.value} | {triage_result.sentiment.value}",
-            ),
-            HistoryMessage(author=MessageAuthor.AGENT, author_name="AI Assistant", content=triage_result.suggested_response, is_ai_draft=True),
-        ]
+    # Historical Messages Setup
+    complaint.communication_history.append(
+        HistoryMessage(author=MessageAuthor.CUSTOMER, author_name="Customer", content=payload.raw_text, timestamp=received_at)
     )
-    cluster_result = get_clustering_service().check_and_register(
-        complaint.id,
-        masked_text,
-        customer_id=complaint.customer_id,
-        transaction_id=complaint.transaction_id
-    )
-    complaint.cluster = cluster_result
-    # Propagate recurring flags from cluster result to the complaint top-level fields
-    complaint.recurring = cluster_result.recurring
-    complaint.recurring_of = cluster_result.recurring_of
     
+    if state.get("linked_incident"):
+        complaint.communication_history.append(
+            HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content=f"Intercepted by Systemic Outage Interceptor for Incident #{state['linked_incident'][:8]}")
+        )
+        complaint.status = ComplaintStatus.PENDING
+    elif state.get("needs_info"):
+        complaint.communication_history.append(
+            HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content=f"Pipeline paused: missing required details for {triage_result.category.value}.")
+        )
+        complaint.communication_history.append(
+            HistoryMessage(author=MessageAuthor.AGENT, author_name="AI Assistant", content=state.get("missing_fields_question"), is_ai_draft=False)
+        )
+        complaint.status = ComplaintStatus.PENDING
+    elif state.get("needs_human"):
+        complaint.communication_history.append(
+            HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content="Pipeline paused: high severity/risk detected, awaiting Supervisor approval.")
+        )
+        complaint.status = ComplaintStatus.PENDING
+    else:
+        complaint.communication_history.extend([
+            HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content=f"Auto-triaged: {triage_result.category.value} | {triage_result.severity.value} | {triage_result.sentiment.value}"),
+            HistoryMessage(author=MessageAuthor.AGENT, author_name="AI Assistant", content=triage_result.suggested_response, is_ai_draft=True)
+        ])
+
+    # Incident cluster mapping checks
+    if state.get("linked_incident"):
+        from app.models.complaint import DuplicateCluster
+        complaint.cluster = DuplicateCluster(
+            cluster_id=state["linked_incident"],
+            is_duplicate=True,
+            duplicate_of=None,
+            cluster_size=5,
+            systemic_alert=True,
+            duplicate_reason="outage_incident"
+        )
+    else:
+        cluster_result = get_clustering_service().check_and_register(
+            complaint.id,
+            masked_text,
+            customer_id=complaint.customer_id,
+            transaction_id=complaint.transaction_id
+        )
+        complaint.cluster = cluster_result
+        complaint.recurring = cluster_result.recurring
+        complaint.recurring_of = cluster_result.recurring_of
+
     store.save(complaint)
+    
+    # Audit log
     store.log_audit("system", "system", "ingest", complaint.id)
+    
+    # Chained hashes in ledger
+    store.log_ledger_event(complaint.id, "created", "customer")
+    store.log_ledger_event(complaint.id, "triaged", "system")
+    if state.get("cbs_verdict"):
+        store.log_ledger_event(complaint.id, f"verified: {state.get('cbs_verdict')}", "system")
+        
     return ComplaintResponse(complaint=complaint, message="Complaint ingested and triaged successfully.")
 
 
@@ -330,6 +391,116 @@ async def get_alerts(current_user: dict = Depends(get_current_user)):
                     alerts.append(c)
                 
     return {"alerts": alerts, "count": len(alerts)}
+
+
+@router.get("/systemic-alerts")
+async def get_systemic_alerts(current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    tenant = current_user.get("tenant_id", "Union Bank")
+    complaints = store.all()
+    if tenant:
+        complaints = [c for c in complaints if c.tenant_id == tenant]
+
+    clusters = defaultdict(list)
+    for c in complaints:
+        if c.cluster and c.cluster.cluster_id:
+            clusters[c.cluster.cluster_id].append(c)
+
+    result = []
+    for cl_id, members in clusters.items():
+        unique_customers = {m.customer_id for m in members if m.customer_id}
+        affected_customers = len(unique_customers)
+        if affected_customers >= 5:
+            categories = [
+                m.triage.category.value if (m.triage and hasattr(m.triage.category, 'value')) else str(m.triage.category)
+                for m in members if m.triage
+            ]
+            dominant_category = Counter(categories).most_common(1)[0][0] if categories else "General"
+            
+            timestamps = [m.received_at for m in members]
+            first_raised = min(timestamps).isoformat() if timestamps else None
+            last_raised = max(timestamps).isoformat() if timestamps else None
+            
+            sample_texts = [m.masked_text for m in members if m.masked_text][:3]
+            
+            result.append({
+                "cluster_id": cl_id,
+                "affected_customers": affected_customers,
+                "cluster_size": len(members),
+                "dominant_category": dominant_category,
+                "first_raised": first_raised,
+                "last_raised": last_raised,
+                "sample_texts": sample_texts,
+                "members": [
+                    {
+                        "id": m.id,
+                        "ticket_id": m.ticket_id,
+                        "masked_text": m.masked_text[:120] + ("..." if len(m.masked_text) > 120 else "") if m.masked_text else "",
+                        "customer_id": m.customer_id,
+                        "status": m.status.value if hasattr(m.status, 'value') else str(m.status),
+                        "relationship_tag": m.cluster.duplicate_reason if m.cluster else None
+                    }
+                    for m in members
+                ]
+            })
+            
+    result.sort(key=lambda x: (x["affected_customers"], x["cluster_size"]), reverse=True)
+    return result
+
+
+@router.get("/semantic-clusters")
+async def get_semantic_clusters(current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    tenant = current_user.get("tenant_id", "Union Bank")
+    complaints = store.all()
+    if tenant:
+        complaints = [c for c in complaints if c.tenant_id == tenant]
+
+    clusters = defaultdict(list)
+    for c in complaints:
+        if c.cluster and c.cluster.cluster_id:
+            clusters[c.cluster.cluster_id].append(c)
+
+    result = []
+    for cl_id, members in clusters.items():
+        unique_customers = {m.customer_id for m in members if m.customer_id}
+        affected_customers = len(unique_customers)
+        
+        categories = [
+            m.triage.category.value if (m.triage and hasattr(m.triage.category, 'value')) else str(m.triage.category)
+            for m in members if m.triage
+        ]
+        dominant_category = Counter(categories).most_common(1)[0][0] if categories else "General"
+        
+        timestamps = [m.received_at for m in members]
+        first_raised = min(timestamps).isoformat() if timestamps else None
+        last_raised = max(timestamps).isoformat() if timestamps else None
+        
+        sample_texts = [m.masked_text for m in members if m.masked_text][:3]
+        
+        result.append({
+            "cluster_id": cl_id,
+            "affected_customers": affected_customers,
+            "cluster_size": len(members),
+            "dominant_category": dominant_category,
+            "first_raised": first_raised,
+            "last_raised": last_raised,
+            "sample_texts": sample_texts,
+            "members": [
+                {
+                    "id": m.id,
+                    "ticket_id": m.ticket_id,
+                    "masked_text": m.masked_text[:120] + ("..." if len(m.masked_text) > 120 else "") if m.masked_text else "",
+                    "customer_id": m.customer_id,
+                    "status": m.status.value if hasattr(m.status, 'value') else str(m.status),
+                    "relationship_tag": m.cluster.duplicate_reason if m.cluster else None
+                }
+                for m in members
+            ]
+        })
+        
+    result.sort(key=lambda x: (x["affected_customers"], x["cluster_size"]), reverse=True)
+    return result
 
 
 @router.get("/groups")
@@ -767,6 +938,24 @@ async def regulatory_report_new(
     total_active = opening_balance + received_count
     disposed_rate_percent = round(disposed_count / total_active * 100, 1) if total_active else 100.0
 
+    # Calculate real systemic issues (clusters with affected_customers >= 5)
+    clusters = defaultdict(list)
+    for c in complaints:
+        if c.cluster and c.cluster.cluster_id:
+            clusters[c.cluster.cluster_id].append(c)
+    systemic_issues_count = sum(1 for members in clusters.values() if len({m.customer_id for m in members if m.customer_id}) >= 5)
+
+    # Normalize category / severity lists
+    category_counts = Counter()
+    for c in received:
+        cat = c.triage.category.value if (c.triage and hasattr(c.triage.category, 'value')) else (str(c.triage.category) if (c.triage and c.triage.category) else "General")
+        category_counts[cat] += 1
+
+    severity_counts = Counter()
+    for c in received:
+        sev = c.triage.severity.value if (c.triage and hasattr(c.triage.severity, 'value')) else (str(c.triage.severity) if (c.triage and c.triage.severity) else "medium")
+        severity_counts[sev] += 1
+
     report = {
         "period": "Last 30 Days",
         "generated_at": datetime.utcnow().isoformat(),
@@ -778,9 +967,11 @@ async def regulatory_report_new(
         "disposed_total": disposed_count,
         "closing_balance": closing_balance,
         "disposed_rate_percent": disposed_rate_percent,
+        "total_complaints": received_count,
+        "systemic_issues": systemic_issues_count,
         "by_channel": dict(Counter(c.channel.value for c in received)),
-        "by_category": dict(Counter(c.triage.category.value for c in received if c.triage)),
-        "by_severity": dict(Counter(c.triage.severity.value for c in received if c.triage)),
+        "by_category": dict(category_counts),
+        "by_severity": dict(severity_counts),
     }
 
     if format == "json":
@@ -798,6 +989,7 @@ async def regulatory_report_new(
     writer.writerow(["cms_summary", "disposed_total", report["disposed_total"]])
     writer.writerow(["cms_summary", "closing_balance", report["closing_balance"]])
     writer.writerow(["cms_summary", "disposed_rate_percent", report["disposed_rate_percent"]])
+    writer.writerow(["cms_summary", "systemic_issues", report["systemic_issues"]])
     
     for section in ("by_channel", "by_category", "by_severity"):
         for key, value in report[section].items():
@@ -965,7 +1157,8 @@ async def explain_triage(complaint_id: str, current_user: dict = Depends(get_cur
 @router.post("/{complaint_id}/action")
 async def agent_action(complaint_id: str, action: AgentAction, current_user: dict = Depends(get_current_user)):
     store = get_store()
-    if not store.get(complaint_id):
+    c = store.get(complaint_id)
+    if not c:
         raise HTTPException(status_code=404, detail="Complaint not found")
     status_map = {"approve": ComplaintStatus.RESOLVED, "escalate": ComplaintStatus.ESCALATED, "reject": ComplaintStatus.IN_REVIEW}
     new_status = status_map.get(action.action)
@@ -975,6 +1168,29 @@ async def agent_action(complaint_id: str, action: AgentAction, current_user: dic
     
     # Audit log
     store.log_audit(current_user["username"], current_user["role"], f"action: {action.action}", complaint_id)
+    
+    # Ledger and resolution precedent indexing
+    if new_status == ComplaintStatus.RESOLVED:
+        store.log_ledger_event(complaint_id, "resolved", current_user["username"])
+        from app.services.clustering import get_clustering_service
+        encoder_service = get_clustering_service()
+        if encoder_service and encoder_service.healthy:
+            vec = encoder_service._encode(c.masked_text)
+            if vec is not None:
+                vec_list = vec.tolist()[0]
+                from app.services import qdrant_service
+                qdrant_service.upsert_resolved_precedent(
+                    complaint_id=c.id,
+                    vector=vec_list,
+                    payload={
+                        "complaint_text": c.masked_text,
+                        "category": c.triage.category.value if c.triage else "general",
+                        "final_resolution": action.custom_response or (c.triage.suggested_response if c.triage else "")
+                    }
+                )
+    else:
+        store.log_ledger_event(complaint_id, f"action: {action.action}", current_user["username"])
+        
     return {"complaint_id": complaint_id, "new_status": new_status, "complaint": updated}
 
 
@@ -1029,5 +1245,110 @@ async def link_customer(complaint_id: str, payload: dict, current_user: dict = D
     # Audit log
     store.log_audit(current_user["username"], current_user["role"], f"link customer: {c.customer_id}", complaint_id)
     return {"success": True, "complaint": c}
+
+
+@router.get("/{complaint_id}/trace")
+async def get_complaint_trace(complaint_id: str, current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    c = store.get(complaint_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+    return {"complaint_id": complaint_id, "agent_trace": c.agent_trace}
+
+
+@router.post("/{complaint_id}/approve")
+async def approve_complaint_draft(complaint_id: str, current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    c = store.get(complaint_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+    if not c.needs_human or not c.thread_id:
+        raise HTTPException(status_code=400, detail="Complaint does not require approval or is not paused")
+        
+    from app.agents.graph import resume_pipeline
+    res = resume_pipeline(c.thread_id, decision="approved")
+    state = res["state"]
+    
+    c.needs_human = False
+    c.triage.suggested_response = state.get("draft") or ""
+    
+    # Add messages to history
+    c.communication_history.append(
+        HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content="Supervisor approved the draft.")
+    )
+    c.communication_history.append(
+        HistoryMessage(author=MessageAuthor.AGENT, author_name="AI Assistant", content=c.triage.suggested_response, is_ai_draft=True)
+    )
+    
+    store.save(c)
+    store.log_ledger_event(c.id, "approved", current_user["username"])
+    store.log_audit(current_user["username"], current_user["role"], "approve_draft", c.id)
+    
+    return {"success": True, "complaint": c}
+
+
+class ProvideInfoIn(BaseModel):
+    transaction_ref: Optional[str] = None
+    amount: Optional[float] = None
+
+@router.post("/{complaint_id}/provide-info")
+async def provide_complaint_info(complaint_id: str, payload: ProvideInfoIn):
+    store = get_store()
+    c = store.get(complaint_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+    if not c.needs_info or not c.thread_id:
+        raise HTTPException(status_code=400, detail="Complaint is not awaiting info")
+        
+    provided_info = {}
+    if payload.transaction_ref:
+        provided_info["transaction_ref"] = payload.transaction_ref
+        c.transaction_id = payload.transaction_ref
+    if payload.amount:
+        provided_info["amount"] = payload.amount
+        
+    from app.agents.graph import resume_pipeline
+    res = resume_pipeline(c.thread_id, decision="info_provided", provided_info=provided_info)
+    state = res["state"]
+    
+    c.needs_info = False
+    c.needs_human = state.get("needs_human", False)
+    c.missing_fields_question = None
+    
+    # Update triage suggested response draft
+    c.triage.suggested_response = state.get("draft") or ""
+    
+    # Append customer answer to history
+    info_text = f"Customer provided info: Ref={payload.transaction_ref}, Amount={payload.amount}"
+    c.communication_history.append(
+        HistoryMessage(author=MessageAuthor.CUSTOMER, author_name="Customer", content=info_text)
+    )
+    
+    if c.needs_human:
+        c.communication_history.append(
+            HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content="Supervisor approval pending after info submission.")
+        )
+    else:
+        c.communication_history.append(
+            HistoryMessage(author=MessageAuthor.AGENT, author_name="AI Assistant", content=c.triage.suggested_response, is_ai_draft=True)
+        )
+        
+    store.save(c)
+    store.log_ledger_event(c.id, "info_provided", "customer")
+    
+    return {"success": True, "complaint": c}
+
+
+@router.get("/{complaint_id}/ledger/verify")
+async def verify_complaint_ledger(complaint_id: str, current_user: dict = Depends(get_current_user)):
+    store = get_store()
+    valid = store.verify_ledger_chain(complaint_id)
+    return {"complaint_id": complaint_id, "valid": valid}
+
+
+@router.get("/incidents/all")
+async def get_all_active_incidents(current_user: dict = Depends(get_current_user)):
+    return get_store().all_incidents()
+
 
 

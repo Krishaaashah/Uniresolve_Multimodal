@@ -125,6 +125,7 @@ export interface Complaint {
     is_duplicate: boolean;
     duplicate_reason?: string;
     cluster_size: number;
+    affected_customers?: number;
     systemic_alert: boolean;
     cluster_description?: string;
   };
@@ -256,6 +257,10 @@ export const api = {
   getRootCause: () => apiFetch<{ root_causes: RootCause[]; message?: string }>('/complaints/root-cause'),
   
   getClusters: () => apiFetch<ClusterNode[]>('/complaints/clusters'),
+  
+  getSystemicAlerts: () => apiFetch<any[]>('/complaints/systemic-alerts'),
+  
+  getSemanticClusters: () => apiFetch<any[]>('/complaints/semantic-clusters'),
   
   getExplain: (id: string) => apiFetch<{ explanation: string }>(`/complaints/${id}/explain`),
   
