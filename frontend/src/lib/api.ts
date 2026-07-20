@@ -138,6 +138,18 @@ export interface Complaint {
   resolved_at?: string;
   recurring?: boolean;
   recurring_of?: string | null;
+  needs_human?: boolean;
+  needs_info?: boolean;
+  agent_trace?: Array<{
+    node: string;
+    timestamp: string;
+    result?: any;
+  }>;
+  thread_id?: string;
+  linked_incident?: string;
+  priority_score?: number;
+  detected_language?: string;
+  missing_fields_question?: string;
 }
 
 export interface Stats {
@@ -303,3 +315,32 @@ export const api = {
     
   getHealth: () => apiFetch<any>('/health'),
 };
+
+export async function approveComplaintDraft(complaintId: string): Promise<{ success: boolean; complaint: Complaint }> {
+  return apiFetch<{ success: boolean; complaint: Complaint }>(`/complaints/${complaintId}/approve`, {
+    method: 'POST',
+  });
+}
+
+export async function provideComplaintInfo(
+  complaintId: string,
+  transaction_ref?: string,
+  amount?: number
+): Promise<{ success: boolean; complaint: Complaint }> {
+  return apiFetch<{ success: boolean; complaint: Complaint }>(`/complaints/${complaintId}/provide-info`, {
+    method: 'POST',
+    body: JSON.stringify({ transaction_ref, amount }),
+  });
+}
+
+export async function verifyComplaintLedger(complaintId: string): Promise<{ complaint_id: string; valid: boolean }> {
+  return apiFetch<{ complaint_id: string; valid: boolean }>(`/complaints/${complaintId}/ledger/verify`);
+}
+
+export async function fetchComplaintTrace(complaintId: string): Promise<{ complaint_id: string; agent_trace: Array<any> }> {
+  return apiFetch<{ complaint_id: string; agent_trace: Array<any> }>(`/complaints/${complaintId}/trace`);
+}
+
+export async function fetchActiveIncidents(): Promise<Array<{ cluster_id: string; label: string; customer_count: number; ticket_count: number; status: string }>> {
+  return apiFetch<Array<{ cluster_id: string; label: string; customer_count: number; ticket_count: number; status: string }>>(`/complaints/incidents/all`);
+}

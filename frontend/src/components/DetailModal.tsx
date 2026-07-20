@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Complaint, api, CustomerProfile, AuditLog, TimelineProgress } from "@/lib/api";
+import { Complaint, api, CustomerProfile, AuditLog, TimelineProgress, approveComplaintDraft, provideComplaintInfo, verifyComplaintLedger } from "@/lib/api";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -63,6 +63,14 @@ export default function DetailModal({
   const [replyText, setReplyText] = useState("");
   const [sendingReply, setSendingReply] = useState(false);
 
+  // Multi-Agent Pipeline states
+  const [ledgerValid, setLedgerValid] = useState<boolean | null>(null);
+  const [loadingLedger, setLoadingLedger] = useState(false);
+  const [approveLoading, setApproveLoading] = useState(false);
+  const [infoLoading, setInfoLoading] = useState(false);
+  const [infoTxnRef, setInfoTxnRef] = useState("");
+  const [infoAmount, setInfoAmount] = useState("");
+
   const fetchComplaintDetails = async () => {
     if (!complaintId) return;
     setLoading(true);
@@ -95,10 +103,60 @@ export default function DetailModal({
 
   const loadOverviewDetails = async (c: Complaint) => {
     loadTimelineProgress(c.id);
+    loadLedgerStatus(c.id);
     if (c.customer_id) {
       loadCustomerCBS(c.customer_id);
     } else {
       setCustomer(null);
+    }
+  };
+
+  const loadLedgerStatus = async (id: string) => {
+    setLoadingLedger(true);
+    try {
+      const res = await verifyComplaintLedger(id);
+      setLedgerValid(res.valid);
+    } catch (e) {
+      setLedgerValid(null);
+    } finally {
+      setLoadingLedger(false);
+    }
+  };
+
+  const handleApprovePipelineDraft = async () => {
+    if (!complaint) return;
+    setApproveLoading(true);
+    try {
+      const res = await approveComplaintDraft(complaint.id);
+      if (res.success) {
+        toast.success("Supervisor approval granted. Pipeline resumed!");
+        fetchComplaintDetails();
+        onActionCompleted();
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Failed to approve draft.");
+    } finally {
+      setApproveLoading(false);
+    }
+  };
+
+  const handleProvideMissingDetails = async () => {
+    if (!complaint) return;
+    setInfoLoading(true);
+    try {
+      const amt = parseFloat(infoAmount);
+      const res = await provideComplaintInfo(complaint.id, infoTxnRef || undefined, isNaN(amt) ? undefined : amt);
+      if (res.success) {
+        toast.success("Missing details submitted! Multi-agent pipeline resumed.");
+        setInfoTxnRef("");
+        setInfoAmount("");
+        fetchComplaintDetails();
+        onActionCompleted();
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Failed to submit details.");
+    } finally {
+      setInfoLoading(false);
     }
   };
 
@@ -549,6 +607,111 @@ export default function DetailModal({
                           <Label className="text-[9px] text-slate-400 font-bold uppercase select-none">Masked Text (PII scrubbed)</Label>
                           <div className="mt-1.5 p-3 rounded-lg border border-slate-100 bg-slate-50/20 text-xs text-slate-400 font-medium leading-relaxed break-words whitespace-pre-wrap italic select-none">
                             {cleanText(complaint.masked_text)}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Multi-Agent LangGraph Pipeline Trace Stepper */}
+                  <Card className="shadow-sm border-slate-200 bg-slate-50/20">
+                    <CardHeader className="py-3 bg-slate-50/50 border-b border-slate-100 flex flex-row items-center justify-between">
+                      <CardTitle className="text-xs font-black uppercase text-slate-700 flex items-center gap-2 select-none">
+                        <Sparkles className="h-4 w-4 text-purple-600" /> Multi-Agent Redressal Execution Trace
+                      </CardTitle>
+                      {loadingLedger ? (
+                        <span className="text-[10px] text-slate-400 animate-pulse">Checking Ledger...</span>
+                      ) : ledgerValid === true ? (
+                        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 font-extrabold text-[9px] uppercase hover:bg-emerald-100 flex items-center gap-1">
+                          <Shield className="h-3 w-3 text-emerald-600" /> Ledger Verified 🔒
+                        </Badge>
+                      ) : ledgerValid === false ? (
+                        <Badge className="bg-rose-100 text-rose-800 border-rose-200 font-extrabold text-[9px] uppercase hover:bg-rose-100 flex items-center gap-1">
+                          <ShieldAlert className="h-3 w-3 text-rose-600" /> Ledger Tampered
+                        </Badge>
+                      ) : null}
+                    </CardHeader>
+                    <CardContent className="pt-4 space-y-3">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                        {[
+                          { name: "Outage Interceptor", key: "outage_check_node", desc: complaint.linked_incident ? `Linked #${complaint.linked_incident.slice(0, 8)}` : "No Outage" },
+                          { name: "Language Check", key: "language_node", desc: complaint.detected_language || "English" },
+                          { name: "NLP Triage", key: "triage_node", desc: complaint.triage?.category || "Triaged" },
+                          { name: "Missing Details Check", key: "info_check_node", desc: complaint.needs_info ? "Missing Info" : "Complete" },
+                          { name: "CBS Verification", key: "cbs_verification_node", desc: complaint.customer_id ? "Verified" : "Unverified" },
+                          { name: "SLA Compliance", key: "compliance_node", desc: complaint.rbi_status || "On Track" },
+                          { name: "Supervisor Review", key: "human_approval_node", desc: complaint.needs_human ? "Paused for Review" : "Passed" },
+                          { name: "RAG & Drafting", key: "drafting_node", desc: complaint.triage?.suggested_response ? "Draft Ready" : "Pending" }
+                        ].map((node, i) => {
+                          const isExecuted = complaint.agent_trace?.some(t => t.node === node.key);
+                          const isPaused = (node.key === "human_approval_node" && complaint.needs_human) || (node.key === "info_check_node" && complaint.needs_info);
+                          return (
+                            <div key={i} className={`p-2.5 rounded-lg border text-xs flex flex-col justify-between ${
+                              isPaused ? "bg-amber-50/80 border-amber-300 text-amber-900" :
+                              isExecuted ? "bg-white border-slate-200 text-slate-800" : "bg-slate-50 border-slate-100 text-slate-400"
+                            }`}>
+                              <div className="flex items-center justify-between font-bold text-[11px]">
+                                <span className="truncate">{node.name}</span>
+                                <span className="text-[10px]">{isExecuted ? "✓" : isPaused ? "⏸" : "○"}</span>
+                              </div>
+                              <span className="text-[9px] font-medium text-slate-500 mt-1 truncate">{node.desc}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Human Approval Interrupt Banner */}
+                      {complaint.needs_human && (
+                        <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <ShieldAlert className="h-5 w-5 text-amber-600 flex-shrink-0" />
+                            <div>
+                              <div className="font-extrabold text-amber-900 text-xs">Supervisor Approval Required</div>
+                              <div className="text-[11px] text-amber-700 font-medium">High Severity/Amount detected. Pipeline paused prior to dispatch.</div>
+                            </div>
+                          </div>
+                          <Button
+                            onClick={handleApprovePipelineDraft}
+                            disabled={approveLoading}
+                            className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-8 px-4 flex-shrink-0 cursor-pointer"
+                          >
+                            {approveLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Sparkles className="h-3.5 w-3.5 mr-1" />}
+                            Approve AI Response
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Missing Info Form Banner */}
+                      {complaint.needs_info && (
+                        <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
+                          <div className="flex items-center gap-2">
+                            <Info className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                            <div>
+                              <div className="font-extrabold text-blue-900 text-xs">Missing Transaction Details</div>
+                              <div className="text-[11px] text-blue-700 font-medium">{complaint.missing_fields_question || "Please provide reference ID and debited amount."}</div>
+                            </div>
+                          </div>
+                          <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                            <Input
+                              value={infoTxnRef}
+                              onChange={(e) => setInfoTxnRef(e.target.value)}
+                              placeholder="Txn Ref ID (e.g. UPI657483)"
+                              className="h-8 text-xs bg-white border-blue-200"
+                            />
+                            <Input
+                              value={infoAmount}
+                              onChange={(e) => setInfoAmount(e.target.value)}
+                              placeholder="Amount (e.g. 3000)"
+                              className="h-8 text-xs bg-white border-blue-200"
+                            />
+                            <Button
+                              onClick={handleProvideMissingDetails}
+                              disabled={infoLoading || (!infoTxnRef.trim() && !infoAmount.trim())}
+                              className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs h-8 px-4 flex-shrink-0 cursor-pointer"
+                            >
+                              {infoLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+                              Submit Details
+                            </Button>
                           </div>
                         </div>
                       )}
