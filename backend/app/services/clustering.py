@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parents[2]
 INDEX_PATH = BASE_DIR / "faiss_index.bin"
 MAP_PATH = BASE_DIR / "cluster_map.json"
-SIMILARITY_THRESHOLD = 0.88      # cosine similarity to be considered duplicate
-CLUSTER_ALERT_THRESHOLD = 5      # unique customers in a cluster → systemic alert
+from app.config import SIMILARITY_THRESHOLD, CLUSTER_ALERT_THRESHOLD
 EMBEDDING_DIM = 384              # all-MiniLM-L6-v2 output size
 
 

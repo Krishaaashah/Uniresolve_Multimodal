@@ -57,6 +57,57 @@ MOCK_CUSTOMERS = {
 }
 
 
+def generate_dynamic_profile(customer_id: str) -> dict:
+    import hashlib
+    h = hashlib.sha256(customer_id.encode()).hexdigest()
+    val = int(h[:8], 16)
+    
+    first_names = ["Rohan", "Siddharth", "Neha", "Ananya", "Vikram", "Meera", "Karan", "Pooja"]
+    last_names = ["Mehta", "Joshi", "Gupta", "Deshmukh", "Singhania", "Iyer", "Nair", "Rao"]
+    fn = first_names[val % len(first_names)]
+    ln = last_names[(val // len(first_names)) % len(last_names)]
+    
+    acct_types = ["Savings Account", "Current Account", "Salary Account", "Home Loan Account"]
+    acct_type = acct_types[val % len(acct_types)]
+    
+    bal_val = 25000 + (val % 475000)
+    bal_str = f"Rs {bal_val:,.2f}"
+    
+    phone_suffix = str(10000 + (val % 89999))
+    phone = f"+91 98765 {phone_suffix}"
+    email = f"{fn.lower()}.{ln.lower()}{val % 99}@email.com"
+    acct_no = str(9000000000 + (val % 999999999))
+    
+    tx1_ref = f"UPI{str(val % 900000 + 100000)}"
+    tx2_ref = f"ATM{str((val + 1) % 900000 + 100000)}"
+    tx3_ref = f"EMI{str((val + 2) % 900000 + 100000)}"
+    
+    return {
+        "id": customer_id,
+        "name": f"{fn} {ln}",
+        "phone": phone,
+        "email": email,
+        "account_no": acct_no,
+        "account_type": acct_type,
+        "balance": bal_str,
+        "kyc_status": "Verified",
+        "risk_tier": "Low Risk" if val % 2 == 0 else "Medium Risk",
+        "transactions": [
+            {"date": "2026-06-23", "desc": f"UPI Transfer / Dispute Ref {tx1_ref}", "ref": tx1_ref, "amount": "- Rs 2,500.00", "status": "Failed"},
+            {"date": "2026-06-20", "desc": f"ATM Withdrawal / Delhi Ref {tx2_ref}", "ref": tx2_ref, "amount": "- Rs 5,000.00", "status": "Success"},
+            {"date": "2026-06-15", "desc": f"EMI Auto-Debit / Ref {tx3_ref}", "ref": tx3_ref, "amount": "- Rs 12,000.00", "status": "Success"}
+        ]
+    }
+
+
 def get_customer_profile(customer_id: str) -> dict:
-    """Returns the mock customer profile or None if not found."""
-    return MOCK_CUSTOMERS.get(customer_id)
+    """Returns the mock customer profile or deterministically generates one for valid Customer IDs."""
+    if not customer_id:
+        return None
+    if customer_id in MOCK_CUSTOMERS:
+        return MOCK_CUSTOMERS[customer_id]
+        
+    if customer_id.isdigit() and len(customer_id) == 8:
+        return generate_dynamic_profile(customer_id)
+        
+    return None

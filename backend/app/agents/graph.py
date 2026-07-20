@@ -16,16 +16,7 @@ from app.models.complaint import Severity, SLAStatus
 
 logger = logging.getLogger(__name__)
 
-# RBI-style SLA Lookups by Category
-SLA_HOURS_TABLE = {
-    "Fraud": 24,
-    "UPI Failure": 48,
-    "ATM Failure": 48,
-    "Card Blocking": 24,
-    "KYC Verification": 120,
-    "Double Deduction": 72,
-    "general": 240
-}
+from app.config import SLA_HOURS_TABLE
 
 def translate_text(text: str, target_lang: str) -> str:
     from app.config import GEMINI_API_KEY, GEMINI_MODEL

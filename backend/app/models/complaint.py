@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any, Optional
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from app.config import DEFAULT_TENANT_NAME
 
 
 class Channel(str, Enum):
@@ -224,7 +225,7 @@ class Complaint(BaseModel):
     resolved_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    tenant_id: str = "Union Bank"
+    tenant_id: str = Field(default_factory=lambda: DEFAULT_TENANT_NAME)
     rbi_status: str = "within"
     recurring: bool = False
     recurring_of: Optional[str] = None

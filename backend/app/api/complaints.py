@@ -73,27 +73,8 @@ async def auth_login(payload: LoginIn):
     }
 
 def is_spam_query(text: str) -> bool:
-    import re
-    cleaned = text.strip()
-    if not cleaned:
-        return True
-    if len(cleaned) < 15:
-        return True
-    # If any word is too long (keyboard mashing)
-    if any(len(w) > 25 for w in cleaned.split()):
-        return True
-    alphas = sum(1 for c in cleaned if c.isalpha())
-    if (alphas / len(cleaned)) < 0.35:
-        return True
-    if re.search(r"([a-zA-Z0-9])\1{4,}", cleaned):
-        return True
-    words = cleaned.lower().split()
-    if len(words) > 8:
-        word_counts = Counter(words)
-        most_common_word, count = word_counts.most_common(1)[0]
-        if count / len(words) > 0.5:
-            return True
-    return False
+    from app.services.spam_classifier import get_spam_classifier
+    return get_spam_classifier().is_spam(text)
 
 @router.post("/ingest", response_model=ComplaintResponse, dependencies=[Depends(check_api_key)])
 @limiter.limit("60/minute")

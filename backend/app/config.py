@@ -37,3 +37,17 @@ SLA_HOURS = {
     "low": 72,
 }
 
+DEFAULT_TENANT_NAME = os.getenv("TENANT_NAME", "Union Bank")
+SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.82"))
+CLUSTER_ALERT_THRESHOLD = int(os.getenv("CLUSTER_ALERT_THRESHOLD", "5"))
+
+SLA_HOURS_TABLE = {
+    "Fraud": int(os.getenv("SLA_HOURS_FRAUD", "24")),
+    "UPI Failure": int(os.getenv("SLA_HOURS_UPI", "48")),
+    "ATM Failure": int(os.getenv("SLA_HOURS_ATM", "48")),
+    "Card Blocking": int(os.getenv("SLA_HOURS_CARD", "24")),
+    "KYC Verification": int(os.getenv("SLA_HOURS_KYC", "120")),
+    "Double Deduction": int(os.getenv("SLA_HOURS_DOUBLE_DEDUCTION", "72")),
+    "general": int(os.getenv("SLA_HOURS_GENERAL", "240"))
+}
+
