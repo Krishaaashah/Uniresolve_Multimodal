@@ -15,4 +15,8 @@ node_modules/
 /models/
 
 frontend/assets/uploads/
+frontend/public/assets/uploads/
 backend/frontend/
+*.bin
+faiss_index.bin
+cluster_map.json

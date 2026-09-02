@@ -348,7 +348,7 @@ def drafting_node(state: RedressalState) -> Dict[str, Any]:
                 body = {
                     "vector": vec_list,
                     "limit": 2,
-                    "score_threshold": 0.82,
+                    "score_threshold": 0.70,
                     "with_payload": True
                 }
                 import httpx

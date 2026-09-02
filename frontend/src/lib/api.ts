@@ -35,16 +35,6 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   
   const res = await fetch(url, mergedOptions);
   
-  if (res.status === 401 || res.status === 403) {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('auth_role');
-      localStorage.removeItem('auth_username');
-      window.dispatchEvent(new Event('auth-logout'));
-    }
-    throw new Error('Unauthorized');
-  }
-  
   if (!res.ok) {
     let msg = res.statusText;
     try {

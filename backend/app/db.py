@@ -10,17 +10,27 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 # ── Connection URL ─────────────────────────────────────────────────────────────
 _DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+engine = None
 
 if _DATABASE_URL:
-    # Postgres (or any other full RDBMS)
-    engine = create_engine(
-        _DATABASE_URL,
-        pool_pre_ping=True,          # detect stale connections
-        pool_size=5,
-        max_overflow=10,
-    )
-else:
-    # SQLite fallback — same file the old raw-sqlite store used
+    try:
+        temp_engine = create_engine(
+            _DATABASE_URL,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=10,
+            connect_args={"connect_timeout": 3}
+        )
+        with temp_engine.connect() as conn:
+            pass
+        engine = temp_engine
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Could not connect to PostgreSQL ({_DATABASE_URL}): {e}. Falling back to SQLite.")
+        engine = None
+
+if engine is None:
+    # SQLite fallback
     _db_path = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "complaints.db")
     )

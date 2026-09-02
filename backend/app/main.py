@@ -33,21 +33,36 @@ async def _sla_monitor():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Pre-warm services at startup
+    import atexit
     from app.services.clustering import get_clustering_service
     from app.services.triage import get_triage_service
+    from app.services.store import get_store
+    from app.seed import seed_demo_dataset, clear_demo_dataset
+
+    # Pre-warm services at startup
     get_clustering_service()
     get_triage_service()
+
+    # Automatically seed curated demo dataset if database is empty
+    store = get_store()
+    if len(store.all()) == 0:
+        seed_demo_dataset()
+
+    # Register exit handler for clean shutdown
+    atexit.register(clear_demo_dataset)
 
     from app.connectors.orchestrator import run_orchestrator
     sla_task = asyncio.create_task(_sla_monitor())
     orchestrator_task = asyncio.create_task(run_orchestrator())
     
-    yield
-    
-    # Clean up on shutdown
-    sla_task.cancel()
-    orchestrator_task.cancel()
+    try:
+        yield
+    finally:
+        # Clean up on shutdown
+        sla_task.cancel()
+        orchestrator_task.cancel()
+        # Automatically remove synthetic demo dataset when project stops
+        clear_demo_dataset()
 
 
 app = FastAPI(

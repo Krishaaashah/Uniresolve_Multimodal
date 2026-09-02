@@ -1,8 +1,21 @@
-"""Seed demo data for UniResolve.
+"""
+Curated Synthetic Dataset for UniResolve Demo.
 
-Run from backend/: python -m app.seed
+Contains a compact, realistic dataset covering all product permutations:
+- Exact Omnichannel Duplicates (App + Web + Email)
+- Semantic Duplicates (<7 days)
+- Recurring Complaints (referencing previously resolved tickets)
+- Systemic Outage Anomaly Cluster (>= 5 unique customers triggering outage alerts)
+- High-Value / Fraud grievances requiring Supervisor HITL approval (needs_human)
+- Missing detail transactions prompting interactive customer follow-up (needs_info)
+- Vernacular Hindi and Marathi grievances
+- Approaching statutory SLA breach (28-day aging)
+- Multimodal evidence (OCR receipt image + IVR voice note audio)
+- Real Core Banking System (CBS) transaction records
 """
 
+import os
+import shutil
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -19,290 +32,338 @@ from app.models.complaint import (
     Sentiment,
     Severity,
     TriageResult,
+    SLAStatus,
 )
 from app.services.pii_scrubber import mask_pii
 from app.services.store import get_store
+from app.services.clustering import get_clustering_service
 
 
-def build_complaint(raw, channel, category, severity, status, days_ago, sentiment=Sentiment.FRUSTRATED, cluster_id=None, duplicate_of=None, customer_id=None, attachment_file=None, attachment_type=None, tenant_id="Union Bank", transaction_id=None):
-    import os
+def _copy_mock_attachment(complaint_id: str, attachment_file: str, attachment_type: str) -> dict:
+    connectors_dir = os.path.dirname(os.path.abspath(__file__))
+    src_path = os.path.join(connectors_dir, "connectors", "mock_evidence", attachment_file)
+    if not os.path.exists(src_path):
+        src_path = os.path.join(connectors_dir, "mock_evidence", attachment_file)
 
-    import shutil
-    received_at = datetime.utcnow() - timedelta(days=days_ago, hours=days_ago % 5)
-    masked, fields = mask_pii(raw)
-    key_issue = raw.split(".")[0][:120]
-    
-    complaint_id = str(uuid4())
-    channel_metadata = {"seed": True}
-    
-    if attachment_file and attachment_type:
+    if os.path.exists(src_path):
+        upload_dir = os.path.abspath(os.path.join(connectors_dir, "..", "frontend", "public", "assets", "uploads"))
+        os.makedirs(upload_dir, exist_ok=True)
         ext = os.path.splitext(attachment_file)[1]
-        connectors_dir = os.path.dirname(os.path.abspath(__file__))
-        # Resolve source path
-        src_path = os.path.join(connectors_dir, "connectors", "mock_evidence", attachment_file)
-        if not os.path.exists(src_path):
-            src_path = os.path.join(connectors_dir, "mock_evidence", attachment_file)
-            
-        if os.path.exists(src_path):
-            upload_dir = os.path.abspath(os.path.join(connectors_dir, "..", "frontend", "public", "assets", "uploads"))
-            os.makedirs(upload_dir, exist_ok=True)
-            dst_name = f"{complaint_id}{ext}"
-            dst_path = os.path.join(upload_dir, dst_name)
-            try:
-                shutil.copy(src_path, dst_path)
-                channel_metadata["attachments"] = [{
-                    "type": attachment_type,
-                    "url": f"assets/uploads/{dst_name}"
-                }]
-            except Exception as e:
-                print(f"Error copying seed attachment: {e}")
-                
-    detected_lang = "English"
-    if any(ord(c) >= 0x0900 and ord(c) <= 0x097F for c in raw):
-        detected_lang = "Hindi"
+        dst_name = f"{complaint_id}{ext}"
+        dst_path = os.path.join(upload_dir, dst_name)
+        try:
+            shutil.copy(src_path, dst_path)
+            return {
+                "type": attachment_type,
+                "url": f"assets/uploads/{dst_name}"
+            }
+        except Exception:
+            pass
+    return {}
 
-    from app.services.triage import generate_summary
-    summary_val = generate_summary(masked)
+
+def build_seed_complaint(
+    raw_text: str,
+    channel: Channel,
+    category: str,
+    severity: Severity,
+    status: ComplaintStatus,
+    days_ago: int,
+    sentiment: Sentiment = Sentiment.FRUSTRATED,
+    customer_id: str = None,
+    transaction_id: str = None,
+    attachment_file: str = None,
+    attachment_type: str = None,
+    needs_human: bool = False,
+    needs_info: bool = False,
+    missing_fields_q: str = None,
+    detected_lang: str = "English",
+    priority_score: int = 0,
+    tenant_id: str = "Union Bank",
+) -> Complaint:
+    complaint_id = str(uuid4())
+    received_at = datetime.utcnow() - timedelta(days=days_ago, hours=days_ago % 4)
+    masked_text, masked_fields = mask_pii(raw_text)
+
+    channel_metadata = {"seed": True}
+    if attachment_file and attachment_type:
+        attachment_obj = _copy_mock_attachment(complaint_id, attachment_file, attachment_type)
+        if attachment_obj:
+            channel_metadata["attachments"] = [attachment_obj]
+
+    # Vernacular draft responses
+    if detected_lang == "Hindi":
+        suggested_draft = "प्रिय ग्राहक, आपकी शिकायत दर्ज कर ली गई है। हमारी तकनीकी टीम समस्या का समाधान कर रही है। संदर्भ आईडी: " + complaint_id[:8].upper()
+    elif detected_lang == "Marathi":
+        suggested_draft = "प्रिय ग्राहक, तुमची तक्रार नोंदवली गेली आहे. आमची टीम लवकरात लवकर याचे निवारण करेल. संदर्भ क्रमांक: " + complaint_id[:8].upper()
+    else:
+        suggested_draft = f"Dear Customer, we have registered your {category} grievance. Our support team is actively reviewing your request under reference #{complaint_id[:8].upper()}."
+
+    key_issue = raw_text.split(".")[0][:120]
+
+    # Pre-populate agent execution trace for demo visualization
+    agent_trace = [
+        {"node": "outage_check_node", "timestamp": received_at.isoformat(), "result": {"is_outage": False, "linked_incident": None}},
+        {"node": "language_node", "timestamp": received_at.isoformat(), "result": {"detected_language": detected_lang, "translated_text": masked_text}},
+        {"node": "triage_node", "timestamp": received_at.isoformat(), "result": {"category": category, "severity": severity.value, "priority_score": priority_score}},
+        {"node": "info_check_node", "timestamp": received_at.isoformat(), "result": {"needs_info": needs_info, "question": missing_fields_q}},
+        {"node": "cbs_verification_node", "timestamp": received_at.isoformat(), "result": {"cbs_verdict": "verified" if customer_id else "no_customer"}},
+        {"node": "compliance_node", "timestamp": received_at.isoformat(), "result": {"sla_status": "breached" if days_ago >= 25 else "within_sla"}},
+    ]
+    if needs_human:
+        agent_trace.append({"node": "human_approval_node", "timestamp": received_at.isoformat(), "result": "Paused for Supervisor approval."})
+    else:
+        agent_trace.append({"node": "drafting_node", "timestamp": received_at.isoformat(), "result": {"draft_generated": True}})
+
+    triage_result = TriageResult(
+        category=category,
+        severity=severity,
+        sentiment=sentiment,
+        key_issue=key_issue,
+        key_issues=[key_issue],
+        suggested_response=suggested_draft,
+        confidence=0.92,
+        detected_language=detected_lang,
+        severity_reason=f"Auto-classified as {severity.value} priority."
+    )
 
     complaint = Complaint(
         id=complaint_id,
         channel=channel,
         channel_metadata=channel_metadata,
-        raw_text=raw,
-        masked_text=masked,
-        masked_fields=fields,
+        raw_text=raw_text,
+        masked_text=masked_text,
+        masked_fields=masked_fields,
         customer_id=customer_id,
         transaction_id=transaction_id,
-        summary=summary_val,
+        summary=f"{category}: {key_issue}",
         received_at=received_at,
-        triage=TriageResult(
-            category=category,
-            severity=severity,
-            sentiment=sentiment,
-            key_issue=key_issue,
-            key_issues=[key_issue],
-            suggested_response="प्रिय ग्राहक, हमने आपकी शिकायत दर्ज कर ली है और हमारी टीम इस पर प्राथमिकता से विचार कर रही है। हम आपको लागू SLA के भीतर अपडेट करेंगे।" if detected_lang == "Hindi" else "Dear Customer, we have registered your complaint and our team is reviewing it on priority. We will update you within the applicable SLA.",
-            confidence=0.88,
-            detected_language=detected_lang,
-        ),
-
-        cluster=DuplicateCluster(
-            cluster_id=cluster_id or str(uuid4()),
-            is_duplicate=bool(duplicate_of),
-            duplicate_of=duplicate_of,
-            cluster_size=2 if cluster_id else 1,
-            systemic_alert=bool(cluster_id),
-        ),
+        triage=triage_result,
         status=status,
-        escalation_level=EscalationLevel.L2_SUPERVISOR if status == ComplaintStatus.ESCALATED else EscalationLevel.L1_AGENT,
-        resolved_at=(received_at + timedelta(hours=6)) if status == ComplaintStatus.RESOLVED else None,
+        escalation_level=EscalationLevel.L2_SUPERVISOR if (needs_human or status == ComplaintStatus.ESCALATED) else EscalationLevel.L1_AGENT,
+        resolved_at=(received_at + timedelta(hours=8)) if status == ComplaintStatus.RESOLVED else None,
         tenant_id=tenant_id,
+        needs_human=needs_human,
+        needs_info=needs_info,
+        missing_fields_question=missing_fields_q,
+        detected_language=detected_lang,
+        priority_score=priority_score,
+        agent_trace=agent_trace,
     )
 
     complaint.communication_history = [
-        HistoryMessage(author=MessageAuthor.CUSTOMER, author_name="Customer", content=raw, timestamp=received_at),
-        HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content=f"Seed triage: {category.value} | {severity.value}", timestamp=received_at + timedelta(minutes=2)),
+        HistoryMessage(author=MessageAuthor.CUSTOMER, author_name="Customer", content=raw_text, timestamp=received_at),
+        HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content=f"Auto-triaged: {category} | {severity.value} | {sentiment.value}", timestamp=received_at + timedelta(minutes=1)),
     ]
-    if status == ComplaintStatus.ESCALATED:
-        complaint.escalation_history.append(
-            EscalationRecord(reason="Seeded escalation for demo SLA/compliance workflow", escalated_by="System")
+    if needs_human:
+        complaint.communication_history.append(
+            HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content="Pipeline paused: High value transaction requires Supervisor authorization.")
         )
+    elif needs_info:
+        complaint.communication_history.append(
+            HistoryMessage(author=MessageAuthor.AGENT, author_name="AI Assistant", content=missing_fields_q)
+        )
+    else:
+        complaint.communication_history.append(
+            HistoryMessage(author=MessageAuthor.AGENT, author_name="AI Assistant", content=suggested_draft, is_ai_draft=True)
+        )
+
     return complaint
 
 
-def main():
+def seed_demo_dataset():
+    """
+    Seeds a high-impact, compact dataset demonstrating all core product features:
+    1. Systemic Outage Anomaly Cluster (5 unique customers reporting UPI timeout)
+    2. Exact Omnichannel Duplicate (App + Web with identical Txn ID)
+    3. Semantic Duplicate (<7 days without Txn ID)
+    4. Recurring Complaint (referencing prior resolved ticket)
+    5. High-Value Fraud grievance pausing for Supervisor HITL Approval
+    6. Missing Information Dispute triggering interactive customer prompt
+    7. Vernacular Hindi & Marathi grievances
+    8. Statutory SLA Breach & At-Risk Timelines
+    9. Multimodal Evidence (Image OCR receipt + Voice note)
+    10. CBS Real-time Transaction Ledger
+    """
+    store = get_store()
+
+    # 1. Seed Core Banking System (CBS) transaction records
+    mock_transactions = [
+        {"transaction_id": "TXN-10001-A", "customer_id": "CUST-10001", "amount": "₹2,500.00", "status": "failed", "date": (datetime.utcnow() - timedelta(days=2)).date().isoformat(), "channel": "upi", "description": "UPI/GPay Transfer Failed"},
+        {"transaction_id": "TXN-10002-A", "customer_id": "CUST-10002", "amount": "₹3,200.00", "status": "failed", "date": (datetime.utcnow() - timedelta(days=2)).date().isoformat(), "channel": "upi", "description": "UPI/PhonePe Gateway Timeout"},
+        {"transaction_id": "TXN-10002-B", "customer_id": "CUST-10002", "amount": "₹5,000.00", "status": "failed", "date": (datetime.utcnow() - timedelta(days=10)).date().isoformat(), "channel": "atm", "description": "ATM/Cash Dispense Error"},
+        {"transaction_id": "TXN-10004-A", "customer_id": "CUST-10004", "amount": "₹1,800.00", "status": "failed", "date": (datetime.utcnow() - timedelta(days=2)).date().isoformat(), "channel": "upi", "description": "UPI/Merchant Payment Failed"},
+        {"transaction_id": "TXN-10005-A", "customer_id": "CUST-10005", "amount": "₹4,500.00", "status": "failed", "date": (datetime.utcnow() - timedelta(days=1)).date().isoformat(), "channel": "upi", "description": "UPI/Zomato Debit Failed"},
+        {"transaction_id": "TXN-10006-A", "customer_id": "CUST-10006", "amount": "₹2,100.00", "status": "failed", "date": (datetime.utcnow() - timedelta(days=1)).date().isoformat(), "channel": "upi", "description": "UPI/Swiggy Order Timeout"},
+        {"transaction_id": "TXN-10007-F", "customer_id": "CUST-10007", "amount": "₹45,000.00", "status": "failed", "date": (datetime.utcnow() - timedelta(days=1)).date().isoformat(), "channel": "card", "description": "Card/POS International Charge"},
+        {"transaction_id": "TXN-10010-D", "customer_id": "CUST-10010", "amount": "₹18,450.00", "status": "success", "date": (datetime.utcnow() - timedelta(days=3)).date().isoformat(), "channel": "app", "description": "EMI/Home Loan Double Debit"},
+    ]
+    for tx in mock_transactions:
+        store.save_transaction(tx)
+
+    # 2. Curated Seed Grievances
+    grievances = [
+        # (1) Base Resolved Ticket for Recurrence Testing
+        {
+            "raw_text": "ATM dispensed Rs 0 but Rs 5000 debited from my account during cash withdrawal.",
+            "channel": Channel.BRANCH, "category": "ATM Failure", "severity": Severity.HIGH, "status": ComplaintStatus.RESOLVED,
+            "days_ago": 10, "customer_id": "CUST-10002", "transaction_id": "TXN-10002-B",
+        },
+        # (2) Recurring Complaint (Customer reports issue recurred after resolution)
+        {
+            "raw_text": "ATM cash dispense failed again for transaction TXN-10002-B. The reversal previously approved was reversed back.",
+            "channel": Channel.APP, "category": "ATM Failure", "severity": Severity.HIGH, "status": ComplaintStatus.PENDING,
+            "days_ago": 2, "customer_id": "CUST-10002", "transaction_id": "TXN-10002-B",
+        },
+
+        # (3) Systemic Outage Cluster Member 1 (Leader)
+        {
+            "raw_text": "UPI transfer of Rs 2500 failed but amount was debited from my account. Please reverse it.",
+            "channel": Channel.APP, "category": "UPI Failure", "severity": Severity.HIGH, "status": ComplaintStatus.PENDING,
+            "days_ago": 2, "customer_id": "CUST-10001", "transaction_id": "TXN-10001-A",
+        },
+        # (4) Exact Omnichannel Duplicate of (3) on Web
+        {
+            "raw_text": "Help! The UPI transfer of Rs 2500 is still failed but my account is debited. Revert ASAP.",
+            "channel": Channel.WEB, "category": "UPI Failure", "severity": Severity.HIGH, "status": ComplaintStatus.PENDING,
+            "days_ago": 1, "customer_id": "CUST-10001", "transaction_id": "TXN-10001-A",
+        },
+        # (5) Outage Member 2 (Different Customer, Similar UPI failure)
+        {
+            "raw_text": "UPI payment to merchant timed out but Rs 3200 was deducted from my savings account.",
+            "channel": Channel.EMAIL, "category": "UPI Failure", "severity": Severity.HIGH, "status": ComplaintStatus.PENDING,
+            "days_ago": 2, "customer_id": "CUST-10002", "transaction_id": "TXN-10002-A",
+        },
+        # (6) Outage Member 3 (Multimodal Image OCR Attachment)
+        {
+            "raw_text": "UPI payment failed error screen attached. The recipient did not get the money but account was debited.",
+            "channel": Channel.APP, "category": "UPI Failure", "severity": Severity.HIGH, "status": ComplaintStatus.PENDING,
+            "days_ago": 2, "customer_id": "CUST-10004", "transaction_id": "TXN-10004-A",
+            "attachment_file": "app_error.png", "attachment_type": "image/png"
+        },
+        # (7) Outage Member 4 (Multimodal Voice Note Audio)
+        {
+            "raw_text": "Transcribed Audio: Yes, I tried to make a UPI payment at a store, the app froze and debited my money.",
+            "channel": Channel.IVR, "category": "UPI Failure", "severity": Severity.HIGH, "status": ComplaintStatus.PENDING,
+            "days_ago": 1, "customer_id": "CUST-10005", "transaction_id": "TXN-10005-A",
+            "attachment_file": "voice_note.wav", "attachment_type": "audio/wav"
+        },
+        # (8) Outage Member 5 (5th Unique Customer -> Triggers Systemic Outage Alert!)
+        {
+            "raw_text": "UPI server timeout during payment transfer, amount was debited but status shows pending.",
+            "channel": Channel.SOCIAL, "category": "UPI Failure", "severity": Severity.HIGH, "status": ComplaintStatus.PENDING,
+            "days_ago": 1, "customer_id": "CUST-10006", "transaction_id": "TXN-10006-A",
+        },
+
+        # (9) Non-Transaction Branch Grievance
+        {
+            "raw_text": "I visited the Andheri West branch to update my signature, but branch staff refused to process my request.",
+            "channel": Channel.BRANCH, "category": "Signature Update", "severity": Severity.MEDIUM, "status": ComplaintStatus.PENDING,
+            "days_ago": 3, "customer_id": "CUST-10003",
+        },
+        # (10) Semantic Duplicate of (9) within 7 days
+        {
+            "raw_text": "Signature update request was rejected by branch staff without explanation. Service is very slow.",
+            "channel": Channel.WEB, "category": "Signature Update", "severity": Severity.MEDIUM, "status": ComplaintStatus.PENDING,
+            "days_ago": 1, "customer_id": "CUST-10003",
+        },
+
+        # (11) High-Value Fraud Case (Pauses for Supervisor HITL Approval)
+        {
+            "raw_text": "URGENT: Unauthorized international transaction of Rs 45,000 detected on my credit card! I did not authorize this payment.",
+            "channel": Channel.EMAIL, "category": "Fraud", "severity": Severity.CRITICAL, "status": ComplaintStatus.PENDING,
+            "days_ago": 1, "customer_id": "CUST-10007", "transaction_id": "TXN-10007-F",
+            "needs_human": True, "priority_score": 15,
+        },
+
+        # (12) Missing Information Dispute (Interactive Customer Prompt)
+        {
+            "raw_text": "My debit card payment failed at a local store but money was deducted. Please refund my money.",
+            "channel": Channel.WEB, "category": "Card Payment Decline", "severity": Severity.MEDIUM, "status": ComplaintStatus.PENDING,
+            "days_ago": 1, "customer_id": "CUST-10008",
+            "needs_info": True,
+            "missing_fields_q": "We noticed that some details are missing. To investigate this dispute, could you please provide the transaction reference ID (e.g. TXN-XXXXX) and the exact amount debited?",
+        },
+
+        # (13) Vernacular Hindi Grievance
+        {
+            "raw_text": "मेरा फिक्स्ड डिपॉजिट रिन्यूअल फॉर्म शाखा में जमा करने के बाद भी प्रोसेस नहीं हुआ है। कृपया मेरी मदद करें।",
+            "channel": Channel.BRANCH, "category": "Fixed Deposit", "severity": Severity.MEDIUM, "status": ComplaintStatus.PENDING,
+            "days_ago": 4, "customer_id": "CUST-10009", "detected_lang": "Hindi",
+        },
+
+        # (14) Vernacular Marathi Grievance (Double Deduction)
+        {
+            "raw_text": "माझ्या खात्यातून गृहकर्जाचा ईएमआय १८,४५० रुपये दोनदा कापला गेला आहे. कृपया त्वरित परतावा द्या.",
+            "channel": Channel.APP, "category": "Double Deduction", "severity": Severity.HIGH, "status": ComplaintStatus.PENDING,
+            "days_ago": 2, "customer_id": "CUST-10010", "transaction_id": "TXN-10010-D", "detected_lang": "Marathi",
+        },
+
+        # (15) Approaching Statutory 30-day SLA Breach (Aging 28 Days)
+        {
+            "raw_text": "I submitted a formal request for home loan foreclosure statement 28 days ago. Still awaiting response from the nodal officer.",
+            "channel": Channel.BRANCH, "category": "Loan Foreclosure", "severity": Severity.HIGH, "status": ComplaintStatus.ESCALATED,
+            "days_ago": 28, "customer_id": "CUST-10011",
+        },
+    ]
+
+    clustering = get_clustering_service()
+    saved_complaints = []
+
+    for item in grievances:
+        complaint = build_seed_complaint(**item)
+
+        # Register in ClusteringService to build embeddings and evaluate duplicates
+        cluster_res = clustering.check_and_register(
+            complaint.id,
+            complaint.masked_text,
+            customer_id=complaint.customer_id,
+            transaction_id=complaint.transaction_id
+        )
+
+        complaint.cluster = cluster_res
+        complaint.recurring = cluster_res.recurring
+        complaint.recurring_of = cluster_res.recurring_of
+
+        # Link parent ticket if identified as duplicate
+        if cluster_res.is_duplicate and cluster_res.duplicate_of:
+            parent = store.get(cluster_res.duplicate_of)
+            if parent:
+                complaint.parent_ticket_id = parent.parent_ticket_id or parent.ticket_id
+
+        store.save(complaint)
+        store.log_ledger_event(complaint.id, "created", "customer")
+        store.log_ledger_event(complaint.id, "triaged", "system")
+        saved_complaints.append(complaint)
+
+    print(f"Auto-Seeded {len(saved_complaints)} curated demo complaints into database.")
+    return saved_complaints
+
+
+def clear_demo_dataset():
+    """
+    Cleans up all seeded complaints, transactions, ledger, and FAISS indices
+    when the server stops running, keeping the database completely clean.
+    """
     store = get_store()
     store.clear()
-    
-    # 1. Seed specific transactions for the customers
-    transactions = [
-        {
-            "transaction_id": "TXN-10001-A",
-            "customer_id": "CUST-10001",
-            "amount": "₹5,000.00",
-            "status": "failed",
-            "date": (datetime.utcnow() - timedelta(days=4)).date().isoformat(),
-            "channel": "upi",
-            "description": "UPI/Transfer/Failed"
-        },
-        {
-            "transaction_id": "TXN-10001-B",
-            "customer_id": "CUST-10001",
-            "amount": "₹12,000.00",
-            "status": "success",
-            "date": (datetime.utcnow() - timedelta(days=2)).date().isoformat(),
-            "channel": "app",
-            "description": "Credit card annual bill payment"
-        },
-        {
-            "transaction_id": "TXN-10002-A",
-            "customer_id": "CUST-10002",
-            "amount": "₹10,000.00",
-            "status": "failed",
-            "date": (datetime.utcnow() - timedelta(days=5)).date().isoformat(),
-            "channel": "atm",
-            "description": "ATM/Cash Dispense/Failed"
-        },
-        {
-            "transaction_id": "TXN-10003-A",
-            "customer_id": "CUST-10003",
-            "amount": "₹8,500.00",
-            "status": "success",
-            "date": (datetime.utcnow() - timedelta(days=2)).date().isoformat(),
-            "channel": "web",
-            "description": "Online Shopping payment"
-        },
-        {
-            "transaction_id": "TXN-10005-A",
-            "customer_id": "CUST-10005",
-            "amount": "₹3,000.00",
-            "status": "failed",
-            "date": (datetime.utcnow() - timedelta(days=2)).date().isoformat(),
-            "channel": "upi",
-            "description": "UPI/GPay transfer"
-        }
-    ]
-    for tx in transactions:
-        store.save_transaction(tx)
-    print(f"Seeded {len(transactions)} transactions into database")
 
-    # 2. Seed exactly 15 complaints with strict customer ID and transaction ID properties
-    rows = [
-        # 1. Transaction-based, App, UPI, Critical, Pending, 4 days ago, CUST-10001, TXN-10001-A
-        (
-            "Dear Union Bank, my UPI payment of Rs 5000 failed but amount was debited from my account. Please reverse it.",
-            Channel.APP, Category.UPI, Severity.CRITICAL, ComplaintStatus.PENDING,
-            4, Sentiment.ANGRY, None, None, "CUST-10001",
-            None, None, "Union Bank", "TXN-10001-A"
-        ),
-        # 2. Transaction-based, Web, UPI, High, Pending, 3 days ago, CUST-10001, TXN-10001-A (Exact same customer + same txn ID = exact duplicate)
-        (
-            "Help! The UPI transfer of Rs 5000 is still failed but my account is debited. Revert ASAP.",
-            Channel.WEB, Category.UPI, Severity.HIGH, ComplaintStatus.PENDING,
-            3, Sentiment.ANGRY, None, None, "CUST-10001",
-            None, None, "Union Bank", "TXN-10001-A"
-        ),
-        # 3. Transaction-based, App, Mobile Banking, High, Pending, 5 days ago, CUST-10002, TXN-10002-A (Multimodal: Image)
-        (
-            "I tried to transfer money but got this error screen. The recipient did not get the money.",
-            Channel.APP, Category.MOBILE_BANKING, Severity.HIGH, ComplaintStatus.PENDING,
-            5, Sentiment.FRUSTRATED, None, None, "CUST-10002",
-            "app_error.png", "image/png", "Union Bank", "TXN-10002-A"
-        ),
-        # 4. Transaction-based, IVR, Account, High, Pending, 6 days ago, CUST-10002, TXN-10002-A (Multimodal: Audio, Exact same customer + same txn ID = exact duplicate of 3)
-        (
-            "Transcribed Audio: I was at the Airport ATM trying to withdraw cash, the machine made noise but no money came out, and my account was debited.",
-            Channel.IVR, Category.ACCOUNT, Severity.HIGH, ComplaintStatus.PENDING,
-            6, Sentiment.FRUSTRATED, None, None, "CUST-10002",
-            "voice_note.wav", "audio/wav", "Union Bank", "TXN-10002-A"
-        ),
-        # 5. Transaction-based, App, UPI, Critical, Pending, 2 days ago, CUST-10005, TXN-10005-A (Systemic similarity to complaint 1 - different customer, similar UPI issue)
-        (
-            "My UPI transfer of Rs 3000 to my friend failed but my account was debited. Please credit back.",
-            Channel.APP, Category.UPI, Severity.CRITICAL, ComplaintStatus.PENDING,
-            2, Sentiment.ANGRY, None, None, "CUST-10005",
-            None, None, "Union Bank", "TXN-10005-A"
-        ),
-        # 6. Non-transaction-based, Branch, Account, Medium, Pending, 4 days ago, CUST-10003, no txn
-        (
-            "I visited the branch to update my nominee details, but the branch manager was extremely rude and refused to process it.",
-            Channel.BRANCH, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING,
-            4, Sentiment.FRUSTRATED, None, None, "CUST-10003",
-            None, None, "Union Bank", None
-        ),
-        # 7. Non-transaction-based, Branch, Account, Medium, Pending, 2 days ago, CUST-10003, no txn (Semantic same customer duplicate of 6 within 7 days)
-        (
-            "Nominee details update request was rejected by branch staff. Why is this service so slow?",
-            Channel.BRANCH, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING,
-            2, Sentiment.FRUSTRATED, None, None, "CUST-10003",
-            None, None, "Union Bank", None
-        ),
-        # 8. Non-transaction-based, Web, Account, Medium, Pending, 3 days ago, CUST-10004, no txn (Multimodal: Image)
-        (
-            "Screenshot of the error when trying to update my KYC documents in the portal. It keeps loading forever.",
-            Channel.WEB, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING,
-            3, Sentiment.NEUTRAL, None, None, "CUST-10004",
-            "app_error.png", "image/png", "Union Bank", None
-        ),
-        # 9. Non-transaction-based, IVR, Account, Medium, Pending, 1 day ago, CUST-10004, no txn (Multimodal: Audio, Semantic same customer duplicate of 8 within 7 days)
-        (
-            "Transcribed Audio: Yes, I want to report that the KYC verification is pending for over two weeks now. I submitted all forms.",
-            Channel.IVR, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING,
-            1, Sentiment.FRUSTRATED, None, None, "CUST-10004",
-            "voice_note.wav", "audio/wav", "Union Bank", None
-        ),
-        # 10. Transaction-based, Email, Credit Card, High, Pending, 2 days ago, CUST-10001, TXN-10001-B
-        (
-            "My credit card bill was paid for Rs 12,000 but the transaction is showing twice in my credit card statement.",
-            Channel.EMAIL, Category.CREDIT_CARD, Severity.HIGH, ComplaintStatus.PENDING,
-            2, Sentiment.FRUSTRATED, None, None, "CUST-10001",
-            None, None, "Union Bank", "TXN-10001-B"
-        ),
-        # 11. Non-transaction-based, Branch, Account, Medium, Pending, 5 days ago, CUST-10003, no txn (Hindi vernacular)
-        (
-            "मेरा फिक्स्ड डिपॉजिट रिन्यूअल फॉर्म शाखा में जमा करने के बाद भी प्रोसेस नहीं हुआ है। कृपया मदद करें।",
-            Channel.BRANCH, Category.ACCOUNT, Severity.MEDIUM, ComplaintStatus.PENDING,
-            5, Sentiment.FRUSTRATED, None, None, "CUST-10003",
-            None, None, "Union Bank", None
-        ),
-        # 12. Non-transaction-based, App, Loan, Low, Pending, 3 days ago, CUST-10005, no txn
-        (
-            "I want to apply for a personal loan foreclosure letter, but the app shows error code 404 when downloading.",
-            Channel.APP, Category.LOAN, Severity.LOW, ComplaintStatus.PENDING,
-            3, Sentiment.NEUTRAL, None, None, "CUST-10005",
-            None, None, "Union Bank", None
-        ),
-        # 13. Transaction-based, Web, Credit Card, Medium, Pending, 2 days ago, CUST-10003, TXN-10003-A
-        (
-            "I made an online shopping payment of Rs 8500. The payment was successful but I did not receive any OTP confirmation.",
-            Channel.WEB, Category.CREDIT_CARD, Severity.MEDIUM, ComplaintStatus.PENDING,
-            2, Sentiment.NEUTRAL, None, None, "CUST-10003",
-            None, None, "Union Bank", "TXN-10003-A"
-        ),
-        # 14. Non-transaction-based, Email, Loan, High, Pending, 4 days ago, CUST-10002, no txn
-        (
-            "My home loan EMI interest rate was calculated incorrectly this month. It is higher than the agreement.",
-            Channel.EMAIL, Category.LOAN, Severity.HIGH, ComplaintStatus.PENDING,
-            4, Sentiment.ANGRY, None, None, "CUST-10002",
-            None, None, "Union Bank", None
-        ),
-        # 15. Non-transaction-based, Social, Mobile Banking, Low, Pending, 1 day ago, CUST-10001, no txn
-        (
-            "My mobile banking password reset link is not receiving on my phone number. Please check SMS gateway.",
-            Channel.SOCIAL, Category.MOBILE_BANKING, Severity.LOW, ComplaintStatus.PENDING,
-            1, Sentiment.NEUTRAL, None, None, "CUST-10001",
-            None, None, "Union Bank", None
-        )
-    ]
+    clustering = get_clustering_service()
+    clustering.clear()
 
-    saved = []
-    for idx, row in enumerate(rows):
-        c = build_complaint(*row)
-        
-        # Register in ClusteringService to correctly determine duplicate cluster metadata
-        # and pre-warm/index the FAISS database!
-        from app.services.clustering import get_clustering_service
-        cluster_res = get_clustering_service().check_and_register(
-            c.id,
-            c.masked_text,
-            customer_id=c.customer_id,
-            transaction_id=c.transaction_id
-        )
-        
-        c.cluster = cluster_res
-        c.recurring = cluster_res.recurring
-        c.recurring_of = cluster_res.recurring_of
-        
-        # Connect duplicate of
-        if cluster_res.is_duplicate and cluster_res.duplicate_of:
-            parent_c = store.get(cluster_res.duplicate_of)
-            if parent_c:
-                c.parent_ticket_id = parent_c.parent_ticket_id or parent_c.ticket_id
-        
-        saved.append(store.save(c))
+    # Clean frontend upload files
+    connectors_dir = os.path.dirname(os.path.abspath(__file__))
+    upload_dir = os.path.abspath(os.path.join(connectors_dir, "..", "frontend", "public", "assets", "uploads"))
+    if os.path.exists(upload_dir):
+        import glob
+        for f in glob.glob(os.path.join(upload_dir, "*")):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
 
-    print(f"Seeded {len(saved)} complaints into database")
+    print("Auto-Cleaned synthetic demo dataset on server shutdown.")
 
 
 if __name__ == "__main__":
-    main()
+    seed_demo_dataset()

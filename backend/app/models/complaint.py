@@ -105,8 +105,9 @@ class RawComplaintIn(BaseModel):
         if not v:
             return v
         v = v.strip()
-        if not (v.isdigit() and len(v) == 8):
-            raise ValueError("Customer ID must be exactly an 8-digit number")
+        import re
+        if not (v.isdigit() and len(v) == 8) and not re.match(r"^CUST-\w+$", v, re.IGNORECASE):
+            raise ValueError("Customer ID must be exactly an 8-digit number or in format CUST-XXXXX")
         return v
 
     @field_validator("transaction_id")
@@ -115,8 +116,9 @@ class RawComplaintIn(BaseModel):
         if not v:
             return v
         v = v.strip()
-        if not (v.isdigit() and len(v) == 12):
-            raise ValueError("Transaction ID must be exactly a 12-digit number")
+        import re
+        if not (v.isdigit() and len(v) == 12) and not re.match(r"^TXN-[\w-]+$", v, re.IGNORECASE):
+            raise ValueError("Transaction ID must be exactly a 12-digit number or in format TXN-XXXXX")
         return v
 
     @model_validator(mode="after")
@@ -125,7 +127,8 @@ class RawComplaintIn(BaseModel):
             raise ValueError("Either raw_text (complaint_text) or media_file must be provided.")
         is_seed = self.channel_metadata.get("seed") is True
         is_replay = self.source_ref and self.source_ref.startswith("replay-")
-        if not (is_seed or is_replay):
+        is_simulated = self.channel_metadata.get("simulated") is True or (self.source_ref and self.source_ref.startswith("sim-"))
+        if not (is_seed or is_replay or is_simulated):
             if not self.customer_id:
                 raise ValueError("Customer ID is required")
         return self

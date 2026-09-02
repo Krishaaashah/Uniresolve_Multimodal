@@ -9,7 +9,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import RoleLogin from "@/components/RoleLogin";
 import DashboardView from "@/components/DashboardView";
 import ComplaintsView from "@/components/ComplaintsView";
 import SlaView from "@/components/SlaView";
@@ -56,9 +55,9 @@ const DEMO_POOL = [
 ];
 
 export default function Page() {
-  const [authenticated, setAuthenticated] = useState(false);
-  const [userRole, setUserRole] = useState("");
-  const [username, setUsername] = useState("");
+  const [authenticated, setAuthenticated] = useState(true);
+  const [userRole, setUserRole] = useState("operator");
+  const [username, setUsername] = useState("Operator");
 
   const [currentView, setCurrentView] = useState("dashboard");
   const [searchQuery, setSearchQuery] = useState("");
@@ -94,76 +93,33 @@ export default function Page() {
       setClock(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }));
     }, 1000);
 
-    // 2. Auth load checks
-    const token = localStorage.getItem("auth_token");
-    const role = localStorage.getItem("auth_role");
-    const uname = localStorage.getItem("auth_username");
-
-    if (token && role && uname) {
-      setAuthenticated(true);
-      setUserRole(role);
-      setUsername(uname);
-      loadAllData();
-      checkBackendHealth();
-    } else {
-      // Auto login as admin to bypass role login screen
-      const autoLogin = async () => {
-        try {
-          const res = await api.login({ username: "admin", password: "admin123" });
-          localStorage.setItem("auth_token", res.access_token);
-          localStorage.setItem("auth_role", res.role);
-          localStorage.setItem("auth_username", res.username);
-          setAuthenticated(true);
-          setUserRole(res.role);
-          setUsername(res.username);
-          loadAllData();
-          checkBackendHealth();
-        } catch (err) {
-          console.error("Auto login failed", err);
-          // Graceful fallback for offline/local default
-          setAuthenticated(true);
-          setUserRole("admin");
-          setUsername("Administrator");
-        }
-      };
-      autoLogin();
-    }
-
-    // 3. API forced logouts listener
-    const handleLogoutEvent = () => {
-      logout();
-    };
-    window.addEventListener("auth-logout", handleLogoutEvent);
+    // 2. Load all complaints and check health directly
+    loadAllData();
+    checkBackendHealth();
 
     return () => {
       clearInterval(clockTimer);
-      window.removeEventListener("auth-logout", handleLogoutEvent);
       if (liveIntervalRef.current) clearInterval(liveIntervalRef.current);
     };
   }, []);
 
   // Sync refresh intervals (every 60 seconds)
   useEffect(() => {
-    if (!authenticated) return;
     const syncTimer = setInterval(() => {
       loadAllData();
     }, 60000);
     return () => clearInterval(syncTimer);
-  }, [authenticated]);
+  }, []);
 
   // Reseed Hotkey Trigger Listener (Ctrl + Shift + D)
   useEffect(() => {
     const handleHotkey = async (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key === "D") {
         e.preventDefault();
-        if (userRole !== "admin") {
-          toast.error("Seed failed - administrator permissions required.");
-          return;
-        }
         toast.warning("Reseeding demo database...");
         try {
           await api.reseedData();
-          toast.success("Demo database reseeded. 24 fresh complaints loaded.");
+          toast.success("Demo database reseeded. Fresh complaints loaded.");
           loadAllData();
         } catch (err) {
           toast.error("Failed to reseed database.");
@@ -172,7 +128,7 @@ export default function Page() {
     };
     window.addEventListener("keydown", handleHotkey);
     return () => window.removeEventListener("keydown", handleHotkey);
-  }, [userRole]);
+  }, []);
 
   const loadAllData = async () => {
     try {
@@ -273,10 +229,6 @@ export default function Page() {
   };
 
   const handleTriggerReseedFromHeader = async () => {
-    if (userRole !== "admin") {
-      toast.error("Seed failed - administrator permissions required.");
-      return;
-    }
     toast.warning("Reseeding database...");
     try {
       await api.reseedData();
@@ -297,15 +249,6 @@ export default function Page() {
     { id: "clusters", label: "Cluster Analysis", icon: <Network className="h-4 w-4" /> },
     { id: "regulatory", label: "Regulatory Report", icon: <FileText className="h-4 w-4" /> },
   ];
-
-  if (!authenticated) {
-    return (
-      <>
-        <RoleLogin onLoginSuccess={handleLoginSuccess} />
-        <Toaster position="bottom-right" richColors />
-      </>
-    );
-  }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-50 font-sans">
@@ -359,11 +302,11 @@ export default function Page() {
           </button>
         </nav>
 
-        {/* User profile sidebar footer */}
+        {/* Workspace sidebar footer */}
         <div className="p-4 border-t border-slate-800 bg-slate-950/30 flex items-center justify-between text-xs font-semibold text-slate-400">
           <div className="truncate pr-2">
-            <span className="block text-[10px] text-slate-500 font-bold uppercase select-none">Acting User</span>
-            <span className="text-slate-200 block truncate">{username}</span>
+            <span className="block text-[10px] text-blue-400 font-bold uppercase tracking-wider select-none">Workspace</span>
+            <span className="text-slate-200 block font-semibold truncate">Union Bank of India</span>
           </div>
         </div>
       </aside>
@@ -427,23 +370,16 @@ export default function Page() {
               {liveMode ? "Live: Streaming" : "Live Streaming"}
             </Button>
 
-            {/* Admin Seed Database */}
-            {userRole === "admin" && (
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={handleTriggerReseedFromHeader}
-                title="Reseed database with 24 fresh complaints"
-                className="h-8 w-8 text-slate-500 border-slate-200 hover:bg-slate-50 cursor-pointer"
-              >
-                <RotateCcw className="h-4 w-4" />
-              </Button>
-            )}
-
-            {/* User role display */}
-            <span className="hidden sm:inline-flex items-center gap-1.5 border-l border-slate-200 pl-4 py-1 select-none">
-              Role: <strong className="text-slate-700 uppercase font-black">{userRole}</strong>
-            </span>
+            {/* Seed Database Button */}
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handleTriggerReseedFromHeader}
+              title="Reseed demo dataset"
+              className="h-8 w-8 text-slate-500 border-slate-200 hover:bg-slate-50 cursor-pointer"
+            >
+              <RotateCcw className="h-4 w-4" />
+            </Button>
 
             {/* Current clock */}
             <span className="hidden md:inline-flex items-center border-l border-slate-200 pl-4 py-1 select-none font-bold text-slate-600">
