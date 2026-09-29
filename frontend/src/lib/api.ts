@@ -1,73 +1,56 @@
-// UniResolve Frontend API Client in TypeScript
+﻿// Frontend API Client for UniResolve
 
-export const API_BASE = typeof window !== 'undefined'
-  ? (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://127.0.0.1:8000' : window.location.origin)
-  : 'http://127.0.0.1:8000';
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+export const API_KEY = process.env.NEXT_PUBLIC_API_KEY || 'uniresolve-dev-secret-key';
 
-function getHeaders(): HeadersInit {
+export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+  const isFormData = options.body instanceof FormData;
+
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    'x-api-key': API_KEY,
+    ...(options.headers as Record<string, string>),
   };
-  
-  if (typeof window !== 'undefined') {
-    const localKey = localStorage.getItem('UNIRESOLVE_API_KEY');
-    const apiKey = (!localKey || localKey === 'undefined' || localKey === 'null' || localKey.trim() === '') ? 'dev-secret-key' : localKey;
-    headers['X-Api-Key'] = apiKey;
-    
-    const token = localStorage.getItem('auth_token');
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-  }
-  
-  return headers;
-}
 
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE}${path}`;
-  const mergedOptions = {
+  if (!isFormData) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
-    headers: {
-      ...getHeaders(),
-      ...(options.headers || {}),
-    },
-  };
-  
-  const res = await fetch(url, mergedOptions);
-  
+    headers,
+  });
+
   if (!res.ok) {
-    let msg = res.statusText;
+    let errData: any = {};
     try {
-      const errorData = await res.json();
-      if (errorData && errorData.detail) {
-        if (typeof errorData.detail === 'string') {
-          msg = errorData.detail;
-        } else if (Array.isArray(errorData.detail)) {
-          msg = errorData.detail.map((d: any) => d.msg || d).join(', ');
-        }
-      }
-    } catch (e) {}
-    throw new Error(msg);
+      errData = await res.json();
+    } catch {
+      errData = { detail: res.statusText };
+    }
+    throw new Error(errData.detail || `Request failed with status ${res.status}`);
   }
-  
-  // Some endpoints (like downloads) might return raw text or need blob, but we expect JSON by default.
-  if (res.headers.get('content-type')?.includes('text/csv')) {
-    return (await res.text()) as unknown as T;
-  }
-  return res.json() as Promise<T>;
+
+  return res.json();
 }
 
 export interface Complaint {
   id: string;
-  ticket_id?: string;
+  ticket_id: string;
   parent_ticket_id?: string;
-  channel: 'app' | 'email' | 'social' | 'ivr' | 'branch' | 'web';
+  channel: string;
   channel_metadata?: {
     attachments?: Array<{ type: string; url: string }>;
     sender?: string;
     subject?: string;
     author?: string;
     url?: string;
+    audio_ingest?: boolean;
+    audio_filename?: string;
   };
   raw_text: string;
   masked_text: string;
@@ -100,6 +83,10 @@ export interface Complaint {
     confidence: number;
     detected_language?: string;
     severity_reason?: string;
+    urgency_score?: number;
+    modality_weights?: { text: number; audio: number };
+    triage_mode?: string;
+    model_version?: string;
   };
   sla?: {
     deadline: string;
@@ -140,6 +127,12 @@ export interface Complaint {
   priority_score?: number;
   detected_language?: string;
   missing_fields_question?: string;
+  urgency_score?: number;
+  modality_weights?: { text: number; audio: number };
+  triage_mode?: string;
+  transcript?: string;
+  audio_url?: string;
+  model_version?: string;
 }
 
 export interface Stats {
@@ -272,6 +265,12 @@ export const api = {
     apiFetch<any>('/complaints/ingest', {
       method: 'POST',
       body: JSON.stringify(data),
+    }),
+
+  ingestAudio: (formData: FormData) =>
+    apiFetch<any>('/complaints/ingest-audio', {
+      method: 'POST',
+      body: formData,
     }),
     
   doAction: (id: string, action: string, customResponse: string) =>

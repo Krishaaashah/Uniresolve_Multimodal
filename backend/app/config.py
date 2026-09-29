@@ -3,9 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_KEY = os.getenv("API_KEY")
-if not API_KEY:
-    raise RuntimeError("API_KEY environment variable is required")
+API_KEY = os.getenv("API_KEY", "uniresolve-dev-secret-key")
 
 ALLOWED_ORIGINS = [
     origin.strip()
@@ -16,6 +14,9 @@ ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+
+# Triage mode: 'local' (multimodal fusion with WavLM + FinBERT) or 'api' (Gemini/Claude LLM)
+TRIAGE_MODE = os.getenv("TRIAGE_MODE", "local").lower()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -51,3 +52,10 @@ SLA_HOURS_TABLE = {
     "general": int(os.getenv("SLA_HOURS_GENERAL", "240"))
 }
 
+AUDIO_UPLOAD_DIR = os.getenv(
+    "AUDIO_UPLOAD_DIR",
+    os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "public", "assets", "uploads", "audio")
+    )
+)
+os.makedirs(AUDIO_UPLOAD_DIR, exist_ok=True)

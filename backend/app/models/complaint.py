@@ -19,6 +19,7 @@ class Channel(str, Enum):
     IVR = "ivr"
     BRANCH = "branch"
     APP = "app"
+    VOICE = "voice"
 
 
 class Severity(str, Enum):
@@ -81,6 +82,7 @@ class DynamicCategory(str):
     def value(self) -> str:
         return self
 
+
 class RawComplaintIn(BaseModel):
     channel: Channel
     raw_text: Optional[str] = Field(default="", max_length=5000, validation_alias=AliasChoices("raw_text", "complaint_text"))
@@ -91,6 +93,7 @@ class RawComplaintIn(BaseModel):
     received_at: Optional[datetime] = None
     media_file: Optional[str] = None
     media_type: Optional[str] = None
+    transcript: Optional[str] = None
 
     @field_validator("raw_text")
     @classmethod
@@ -102,20 +105,18 @@ class RawComplaintIn(BaseModel):
     @field_validator("customer_id")
     @classmethod
     def validate_customer_id(cls, v: Optional[str]) -> Optional[str]:
-        if not v:
-            return v
-        v = v.strip()
+        if v is None or v == "":
+            return None
         import re
-        if not (v.isdigit() and len(v) == 8) and not re.match(r"^CUST-\w+$", v, re.IGNORECASE):
-            raise ValueError("Customer ID must be exactly an 8-digit number or in format CUST-XXXXX")
+        if not re.match(r"^CUST-[\w-]+$", v, re.IGNORECASE) and not (v.isdigit() and len(v) >= 4):
+            raise ValueError("Customer ID must start with CUST- (e.g. CUST-10245) or be numeric")
         return v
 
     @field_validator("transaction_id")
     @classmethod
     def validate_transaction_id(cls, v: Optional[str]) -> Optional[str]:
-        if not v:
-            return v
-        v = v.strip()
+        if v is None or v == "":
+            return None
         import re
         if not (v.isdigit() and len(v) == 12) and not re.match(r"^TXN-[\w-]+$", v, re.IGNORECASE):
             raise ValueError("Transaction ID must be exactly a 12-digit number or in format TXN-XXXXX")
@@ -123,8 +124,8 @@ class RawComplaintIn(BaseModel):
 
     @model_validator(mode="after")
     def validate_content_present(self) -> RawComplaintIn:
-        if not self.raw_text and not self.media_file:
-            raise ValueError("Either raw_text (complaint_text) or media_file must be provided.")
+        if not self.raw_text and not self.media_file and not self.transcript:
+            raise ValueError("Either raw_text (complaint_text), media_file, or transcript must be provided.")
         is_seed = self.channel_metadata.get("seed") is True
         is_replay = self.source_ref and self.source_ref.startswith("replay-")
         is_simulated = self.channel_metadata.get("simulated") is True or (self.source_ref and self.source_ref.startswith("sim-"))
@@ -144,6 +145,10 @@ class TriageResult(BaseModel):
     confidence: float = 0.75
     detected_language: str = "English"
     severity_reason: Optional[str] = None
+    urgency_score: Optional[float] = None
+    modality_weights: Optional[dict[str, float]] = None
+    triage_mode: Optional[str] = "local"
+    model_version: Optional[str] = "v1.0-gated"
 
     @field_validator("category", mode="before")
     @classmethod
@@ -153,7 +158,6 @@ class TriageResult(BaseModel):
         if isinstance(v, str):
             return DynamicCategory(v)
         return DynamicCategory(str(v))
-
 
 
 class DuplicateCluster(BaseModel):
@@ -240,6 +244,12 @@ class Complaint(BaseModel):
     priority_score: int = 0
     detected_language: str = "English"
     missing_fields_question: Optional[str] = None
+    urgency_score: Optional[float] = None
+    modality_weights: Optional[dict[str, float]] = None
+    triage_mode: Optional[str] = "local"
+    transcript: Optional[str] = None
+    audio_url: Optional[str] = None
+    model_version: Optional[str] = "v1.0-gated"
 
 
 def compute_rbi_status(received_at: datetime, resolved_at: Optional[datetime] = None) -> str:

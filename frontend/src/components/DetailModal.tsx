@@ -493,6 +493,104 @@ export default function DetailModal({
                     </div>
                   </div>
 
+                  {/* Multimodal Triage Intelligence Banner */}
+                  <div className="p-4 bg-gradient-to-br from-indigo-50/70 via-slate-50 to-blue-50/70 rounded-xl border border-indigo-100 shadow-sm space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100/60 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-indigo-600" />
+                        <span className="text-xs font-bold text-slate-800">Multimodal Triage Intelligence</span>
+                        <Badge className={`text-[10px] font-extrabold ${
+                          (complaint.triage_mode || complaint.triage?.triage_mode) === 'local'
+                            ? "bg-indigo-100 text-indigo-800 border-indigo-200"
+                            : "bg-purple-100 text-purple-800 border-purple-200"
+                        }`}>
+                          {(complaint.triage_mode || complaint.triage?.triage_mode) === 'local'
+                            ? "Local Gated Fusion (WavLM + FinBERT)"
+                            : "Cloud LLM API"}
+                        </Badge>
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-medium">
+                        Model: <span className="font-mono font-bold text-slate-700">{complaint.model_version || complaint.triage?.model_version || "v1.0-gated"}</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                      {/* Urgency Score */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-xs font-semibold">
+                          <span className="text-slate-600">Urgency Score</span>
+                          <span className={`font-mono font-bold ${
+                            (complaint.urgency_score ?? complaint.triage?.urgency_score ?? 0.5) >= 0.75 ? "text-rose-600" :
+                            (complaint.urgency_score ?? complaint.triage?.urgency_score ?? 0.5) >= 0.45 ? "text-amber-600" : "text-emerald-600"
+                          }`}>
+                            {Math.round(((complaint.urgency_score ?? complaint.triage?.urgency_score ?? 0.5) * 100))}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              (complaint.urgency_score ?? complaint.triage?.urgency_score ?? 0.5) >= 0.75 ? "bg-rose-500" :
+                              (complaint.urgency_score ?? complaint.triage?.urgency_score ?? 0.5) >= 0.45 ? "bg-amber-500" : "bg-emerald-500"
+                            }`}
+                            style={{ width: `${Math.round(((complaint.urgency_score ?? complaint.triage?.urgency_score ?? 0.5) * 100))}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Modality Contribution */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-xs font-semibold">
+                          <span className="text-slate-600">Modality Contribution</span>
+                          <span className="text-[11px] font-mono text-slate-700">
+                            Text: {Math.round(((complaint.modality_weights?.text ?? complaint.triage?.modality_weights?.text ?? 1.0) * 100))}% | 
+                            Audio: {Math.round(((complaint.modality_weights?.audio ?? complaint.triage?.modality_weights?.audio ?? 0.0) * 100))}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex">
+                          <div 
+                            className="bg-indigo-600 h-full transition-all duration-500"
+                            style={{ width: `${Math.round(((complaint.modality_weights?.text ?? complaint.triage?.modality_weights?.text ?? 1.0) * 100))}%` }}
+                          />
+                          <div 
+                            className="bg-amber-500 h-full transition-all duration-500"
+                            style={{ width: `${Math.round(((complaint.modality_weights?.audio ?? complaint.triage?.modality_weights?.audio ?? 0.0) * 100))}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Audio Grievance Player & Speech Transcript (if voice / audio present) */}
+                  {(complaint.audio_url || complaint.transcript || complaint.channel === 'voice') && (
+                    <Card className="border-amber-200/80 bg-amber-50/30 shadow-sm">
+                      <CardHeader className="py-3 border-b border-amber-100 bg-amber-50/50">
+                        <CardTitle className="text-xs font-bold text-amber-900 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <FileAudio className="h-4 w-4 text-amber-600" />
+                            Voice Grievance & Speech Transcript
+                          </span>
+                          <Badge className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold border-emerald-200">
+                            Presidio PII Anonymized
+                          </Badge>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="pt-3 space-y-3">
+                        {complaint.audio_url && (
+                          <div className="bg-white p-2.5 rounded-lg border border-amber-200/60 shadow-xs">
+                            <audio controls src={complaint.audio_url} className="w-full h-9 outline-none" preload="auto" />
+                          </div>
+                        )}
+                        <div className="p-3 bg-white rounded-lg border border-slate-200 text-xs text-slate-700 leading-relaxed font-sans">
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                            Decoded Speech Transcript:
+                          </div>
+                          {cleanText(complaint.transcript || complaint.masked_text || complaint.raw_text)}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+
                   {/* CBS Integration Profile */}
                   <Card className="shadow-sm border-slate-200">
                     <CardHeader className="py-4 border-b border-slate-100 bg-slate-50/20">

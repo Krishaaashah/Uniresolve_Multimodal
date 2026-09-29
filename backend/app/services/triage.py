@@ -1,24 +1,30 @@
-"""
-NLP Triage Service
-- LLM-based classification (Gemini primary, Anthropic fallback) with a deterministic
-  keyword fallback when no API key is configured.
-- Returns TriageResult with a suggested response draft
+﻿"""
+NLP & Multimodal Triage Service for UniResolve.
+- Local Multimodal Fusion mode: WavLM + FinBERT + Gated Cross-Attention (TRIAGE_MODE=local)
+- LLM API fallback mode: Gemini/Claude API (TRIAGE_MODE=api)
+- Deterministic rule fallback when offline or during exceptions
 """
 
+import os
 import re
 import json
+import uuid
 import logging
-import os
 import threading
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+
+import torch
+import torch.nn.functional as F
 
 from app.models.complaint import (
     TriageResult, Category, Severity, Sentiment
 )
 from app.config import (
-    GEMINI_API_KEY, ANTHROPIC_API_KEY, GEMINI_MODEL, CLAUDE_MODEL
+    GEMINI_API_KEY, ANTHROPIC_API_KEY, GEMINI_MODEL, CLAUDE_MODEL, TRIAGE_MODE
 )
 from app.services.llm import _claude_json
+
 logger = logging.getLogger(__name__)
 
 CATEGORY_KEYWORDS = {
@@ -28,7 +34,7 @@ CATEGORY_KEYWORDS = {
     Category.NETBANKING: ["net banking", "netbanking", "login", "password", "otp", "internet banking", "online banking"],
     Category.ATM: ["atm", "cash withdrawal", "atm card", "swallowed", "dispense"],
     Category.CREDIT_CARD: ["card", "debit card", "credit card", "swipe", "blocked card"],
-    Category.LOAN: ["loan", "emi", "interest", "repayment", "mortgage"],
+    Category.LOAN: ["loan", "emi", "interest", "repayment", "mortgage", "foreclosure"],
     Category.INSURANCE: ["insurance", "claim", "premium", "policy"],
     Category.INVESTMENT: ["investment", "mutual fund", "portfolio", "demat", "shares"],
     Category.FRAUD: ["fraud", "scam", "unauthorized", "stolen", "phishing", "hack", "cheat"],
@@ -49,47 +55,57 @@ SENTIMENT_KEYWORDS = {
 
 RESPONSE_TEMPLATES = {
     Category.MOBILE_BANKING: "Dear Customer, we acknowledge your concern regarding your digital banking transaction. Our team is investigating the issue on priority. You will receive an update within 24 hours. Reference ID: {ref_id}",
-    Category.ACCOUNT: "Dear Customer, your account service query has been registered. Our team will review the details and update you at the earliest.",
-    Category.LOAN: "Dear Customer, we have received your query regarding your loan/EMI. Our loans team will review your account and contact you within 2 business days.",
-    Category.CREDIT_CARD: "Dear Customer, we are sorry to hear about your card issue. If your card is compromised, please call our helpline immediately to block it while our team reviews your complaint.",
-    Category.INSURANCE: "Dear Customer, we have registered your insurance complaint and will route it to the concerned team for review.",
-    Category.INVESTMENT: "Dear Customer, we have received your investment-related concern and will have the specialist team review it.",
-    Category.FRAUD:      "URGENT: Dear Customer, we take fraud reports extremely seriously. Your account has been flagged for immediate review. Please call our fraud helpline 1800-XXX-XXXX (24x7) immediately. Do NOT share any OTP or credentials.",
-    Category.GENERAL:    "Dear Customer, thank you for reaching out to UniResolve. Your complaint has been registered and will be addressed by our support team within 48 hours.",
-    Category.UPI:        "Dear Customer, we have registered your complaint regarding the UPI transaction failure. As per RBI guidelines, we are processing the status check and reversal. Reference ID: {ref_id}.",
-    Category.NETBANKING: "Dear Customer, we are looking into the net banking login/service issue. Our support team will review and resolve it at the earliest.",
-    Category.ATM:        "Dear Customer, we acknowledge your ATM-related grievance. If cash was not dispensed but debited, a reversal will be processed as per RBI timelines. Reference ID: {ref_id}.",
-    Category.KYC:        "Dear Customer, your KYC update request is being reviewed by our compliance team. Reference ID: {ref_id}."
+    Category.ACCOUNT: "Dear Customer, your account service query has been registered. Our team will review the details and update you at the earliest. Reference ID: {ref_id}",
+    Category.LOAN: "Dear Customer, we have received your query regarding your loan/EMI. Our loans team will review your account and contact you within 2 business days. Reference ID: {ref_id}",
+    Category.CREDIT_CARD: "Dear Customer, we are sorry to hear about your card issue. If your card is compromised, please call our helpline immediately to block it while our team reviews your complaint. Reference ID: {ref_id}",
+    Category.INSURANCE: "Dear Customer, we have registered your insurance complaint and will route it to the concerned team for review. Reference ID: {ref_id}",
+    Category.INVESTMENT: "Dear Customer, we have received your investment-related concern and will have the specialist team review it. Reference ID: {ref_id}",
+    Category.FRAUD:      "URGENT: Dear Customer, we take fraud reports extremely seriously. Your account has been flagged for immediate review. Please call our fraud helpline 1800-XXX-XXXX (24x7) immediately. Do NOT share any OTP or credentials. Reference ID: {ref_id}",
+    Category.GENERAL:    "Dear Customer, thank you for reaching out to UniResolve. Your complaint has been registered and will be addressed by our support team within 48 hours. Reference ID: {ref_id}",
+    Category.UPI:        "Dear Customer, we have registered your complaint regarding the UPI transaction failure. As per RBI guidelines, we are processing the status check and reversal. Reference ID: {ref_id}",
+    Category.NETBANKING: "Dear Customer, we are looking into the net banking login/service issue. Our support team will review and resolve it at the earliest. Reference ID: {ref_id}",
+    Category.ATM:        "Dear Customer, we acknowledge your ATM-related grievance. If cash was not dispensed but debited, a reversal will be processed as per RBI timelines. Reference ID: {ref_id}",
+    Category.KYC:        "Dear Customer, your KYC update request is being reviewed by our compliance team. Reference ID: {ref_id}"
+}
+
+TARGET_CATEGORIES = [
+    "Loans",
+    "Accounts",
+    "Credit Cards",
+    "UPI/Payments",
+    "Transaction Errors",
+    "KYC/Verification"
+]
+
+CATEGORY_TO_ENUM = {
+    "Loans": Category.LOAN,
+    "Accounts": Category.ACCOUNT,
+    "Credit Cards": Category.CREDIT_CARD,
+    "UPI/Payments": Category.UPI,
+    "Transaction Errors": Category.ATM,
+    "KYC/Verification": Category.KYC,
 }
 
 
 def normalize_category(cat_str: str) -> str:
-    """Normalize and clean dynamic category names."""
     if not cat_str:
         return "General"
     cat_str = cat_str.strip()
-    
-    # Obvious synonym mergers
     lower = cat_str.lower()
     
     if any(x in lower for x in ["upi failure", "upi transaction failed", "upi transaction failure", "upi fail", "upi transfer failed"]):
         return "UPI Failure"
     if lower == "upi":
         return "UPI Failure"
-        
     if any(x in lower for x in ["card block", "debit card blocked", "card blocked", "card block request", "block card"]):
         return "Card Blocking"
-        
     if any(x in lower for x in ["home loan foreclosure", "loan foreclosure", "foreclosure letter", "foreclosure fee"]):
         return "Loan Foreclosure"
-        
     if any(x in lower for x in ["double debit", "charged twice", "double deduction", "emi debited twice"]):
         return "Double Deduction"
-        
     if any(x in lower for x in ["kyc update", "kyc pending", "kyc verification", "kyc pending for"]):
         return "KYC Verification"
 
-    # Title capitalization
     words = re.split(r'[\s_]+', cat_str)
     cleaned_words = []
     for w in words:
@@ -104,6 +120,158 @@ def normalize_category(cat_str: str) -> str:
     return " ".join(cleaned_words)
 
 
+class LocalMultimodalTriageEngine:
+    """
+    Local Multimodal inference engine powered by WavLM + FinBERT + GatedCrossAttentionFusion.
+    Runs strictly on CPU with frozen feature extraction backbones.
+    """
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.fusion_model = None
+        self.text_encoder = None
+        self.audio_encoder = None
+        self.device = torch.device("cpu")
+        self._load_models()
+
+    def _load_models(self):
+        try:
+            import sys
+            from pathlib import Path
+            backend_root = Path(__file__).resolve().parents[2]
+            if str(backend_root) not in sys.path:
+                sys.path.insert(0, str(backend_root))
+
+            from ml.text_encoder import get_text_encoder
+            from ml.audio_encoder import get_audio_encoder
+            from ml.fusion import GatedCrossAttentionFusion
+
+            self.text_encoder = get_text_encoder(freeze=True)
+            self.audio_encoder = get_audio_encoder(freeze=True)
+            self.fusion_model = GatedCrossAttentionFusion()
+
+            ckpt_path = backend_root / "ml" / "checkpoints" / "gated_fusion_seed42.pt"
+            if ckpt_path.exists():
+                try:
+                    state_dict = torch.load(str(ckpt_path), map_location=self.device)
+                    self.fusion_model.load_state_dict(state_dict)
+                    logger.info("Loaded trained GatedCrossAttentionFusion weights from checkpoint.")
+                except Exception as e:
+                    logger.warning(f"Failed to load checkpoint state dict: {e}. Using initialized model.")
+            else:
+                logger.info("No checkpoint file found at gated_fusion_seed42.pt; using initialized fusion model.")
+
+            self.fusion_model.eval()
+        except Exception as e:
+            logger.warning(f"Could not load local ML pipeline: {e}. Local engine fallback enabled.")
+
+    def triage(
+        self,
+        masked_text: str,
+        audio_path: Optional[str] = None,
+        skip_ai_draft: bool = False,
+        transaction_note: Optional[str] = None,
+        customer_id: Optional[str] = None,
+        transaction_id: Optional[str] = None
+    ) -> TriageResult:
+        with self.lock:
+            if self.fusion_model is None or self.text_encoder is None:
+                return _rule_based_triage(
+                    masked_text, skip_ai_draft=skip_ai_draft,
+                    transaction_note=transaction_note,
+                    customer_id=customer_id, transaction_id=transaction_id
+                )
+
+            try:
+                # 1. Text embedding
+                text_emb = self.text_encoder([masked_text])
+
+                # 2. Audio embedding
+                if audio_path and os.path.exists(audio_path):
+                    audio_emb = self.audio_encoder.forward_audio_files([audio_path], batch_size=1)
+                    audio_mask = torch.tensor([1.0], dtype=torch.float32)
+                else:
+                    audio_emb = torch.zeros((1, 773), dtype=torch.float32)
+                    audio_mask = torch.tensor([0.0], dtype=torch.float32)
+
+                # 3. Gated Fusion Forward Pass
+                with torch.no_grad():
+                    outputs = self.fusion_model(text_emb, audio_emb, audio_mask=audio_mask)
+
+                cat_logits = outputs["category_logits"]
+                sev_logits = outputs["severity_logits"]
+                modality_weights = outputs.get("modality_weights", {"text": 1.0, "audio": 0.0})
+
+                cat_idx = int(torch.argmax(cat_logits, dim=-1)[0].item())
+                cat_idx = min(max(cat_idx, 0), len(TARGET_CATEGORIES) - 1)
+                predicted_category = TARGET_CATEGORIES[cat_idx]
+
+                sev_probs = F.softmax(sev_logits, dim=-1)[0]
+                prob_low = float(sev_probs[0].item())
+                prob_med = float(sev_probs[1].item())
+                prob_high = float(sev_probs[2].item())
+
+                urgency_score = round(0.15 * prob_low + 0.55 * prob_med + 0.95 * prob_high, 2)
+
+                lower_text = masked_text.lower()
+                is_critical = any(kw in lower_text for kw in SEVERITY_KEYWORDS[Severity.CRITICAL])
+                
+                if is_critical or urgency_score >= 0.88:
+                    severity = Severity.CRITICAL
+                    severity_reason = "Classified as CRITICAL due to urgent security/fraud indicators."
+                elif prob_high >= prob_med and prob_high >= prob_low:
+                    severity = Severity.HIGH
+                    severity_reason = "Classified as HIGH severity due to elevated multimodal grievance signals."
+                elif prob_med >= prob_low:
+                    severity = Severity.MEDIUM
+                    severity_reason = "Classified as MEDIUM severity standard operational issue."
+                else:
+                    severity = Severity.LOW
+                    severity_reason = "Classified as LOW severity routine query."
+
+                sentiment = Sentiment.NEUTRAL
+                for s, keywords in SENTIMENT_KEYWORDS.items():
+                    if any(kw in lower_text for kw in keywords):
+                        sentiment = s
+                        break
+                if sentiment == Sentiment.NEUTRAL and urgency_score >= 0.70:
+                    sentiment = Sentiment.FRUSTRATED
+
+                first_sentence = masked_text.split(".")[0].strip()
+                key_issue = f"{predicted_category}: {first_sentence[:100]}"
+                key_issues = [f"{predicted_category} grievance", first_sentence[:90]]
+
+                base_cat_enum = CATEGORY_TO_ENUM.get(predicted_category, Category.GENERAL)
+                ref_id = str(uuid.uuid4())[:8].upper()
+                template = RESPONSE_TEMPLATES.get(base_cat_enum, RESPONSE_TEMPLATES[Category.GENERAL])
+                suggested_response = template.format(ref_id=ref_id)
+
+                if transaction_note:
+                    suggested_response += f" (Note: {transaction_note})"
+
+                return TriageResult(
+                    category=predicted_category,
+                    severity=severity,
+                    sentiment=sentiment,
+                    key_issue=key_issue,
+                    key_issues=key_issues,
+                    suggested_response=suggested_response,
+                    confidence=round(float(torch.max(F.softmax(cat_logits, dim=-1)).item()), 2),
+                    detected_language="English",
+                    severity_reason=severity_reason,
+                    urgency_score=urgency_score,
+                    modality_weights=modality_weights,
+                    triage_mode="local",
+                    model_version="v1.0-gated"
+                )
+            except Exception as e:
+                logger.error(f"Error in local multimodal triage: {e}. Running rule fallback.")
+                return _rule_based_triage(
+                    masked_text, skip_ai_draft=skip_ai_draft,
+                    transaction_note=transaction_note,
+                    customer_id=customer_id, transaction_id=transaction_id
+                )
+
+
 def _rule_based_triage(
     text: str,
     skip_ai_draft: bool = False,
@@ -111,312 +279,102 @@ def _rule_based_triage(
     customer_id: Optional[str] = None,
     transaction_id: Optional[str] = None
 ) -> TriageResult:
-    """Deterministic fallback when the ML model is not loaded."""
     lower = text.lower()
 
-    # Category
     base_category = Category.GENERAL
     for cat, keywords in CATEGORY_KEYWORDS.items():
         if any(kw in lower for kw in keywords):
             base_category = cat
             break
 
-    # Map Category enum to a normalized string
-    category_str = base_category.value.replace("_", " ")
-    category_label = normalize_category(category_str)
-
-    # Severity
     severity = Severity.MEDIUM
-    severity_reason = "Classified as medium by default rule-based mapping."
+    severity_reason = "Default medium severity classification."
     for sev, keywords in SEVERITY_KEYWORDS.items():
         if any(kw in lower for kw in keywords):
             severity = sev
-            severity_reason = f"Classified as {sev.value} based on keyword match."
+            severity_reason = f"Keyword match for {sev.value} severity."
             break
 
-    # Sentiment
     sentiment = Sentiment.NEUTRAL
     for sent, keywords in SENTIMENT_KEYWORDS.items():
         if any(kw in lower for kw in keywords):
             sentiment = sent
             break
 
-    # Key issue: first sentence, trimmed
-    sentences = re.split(r"[.!?]", text.strip())
-    key_issue = sentences[0].strip()[:120] if sentences else text[:120]
+    first_sentence = text.split(".")[0].strip()
+    key_issue = f"{base_category.value.capitalize()}: {first_sentence[:100]}"
+    key_issues = [f"{base_category.value.capitalize()} issue", first_sentence[:90]]
 
-    import uuid
-    fallback_response = RESPONSE_TEMPLATES.get(base_category, RESPONSE_TEMPLATES[Category.GENERAL]).format(
-        ref_id=str(uuid.uuid4())[:8].upper()
-    )
-    if skip_ai_draft:
-        suggested_response = fallback_response
-    else:
-        suggested_response = generate_draft_response(
-            text, base_category, sentiment, severity, fallback_response, "English",
-            transaction_note=transaction_note, customer_id=customer_id, transaction_id=transaction_id
-        )
+    ref_id = str(uuid.uuid4())[:8].upper()
+    template = RESPONSE_TEMPLATES.get(base_category, RESPONSE_TEMPLATES[Category.GENERAL])
+    suggested_response = template.format(ref_id=ref_id)
+    if transaction_note:
+        suggested_response += f" (Note: {transaction_note})"
+
+    urgency_map = {
+        Severity.CRITICAL: 0.95,
+        Severity.HIGH: 0.75,
+        Severity.MEDIUM: 0.50,
+        Severity.LOW: 0.20,
+    }
 
     return TriageResult(
-        category=category_label,
+        category=base_category.value.capitalize(),
         severity=severity,
         sentiment=sentiment,
         key_issue=key_issue,
-        key_issues=[key_issue],
+        key_issues=key_issues,
         suggested_response=suggested_response,
-        confidence=0.75,
+        confidence=0.85,
         detected_language="English",
-        severity_reason=severity_reason
+        severity_reason=severity_reason,
+        urgency_score=urgency_map.get(severity, 0.50),
+        modality_weights={"text": 1.0, "audio": 0.0},
+        triage_mode="local",
+        model_version="v1.0-rules"
     )
 
 
-
-def generate_draft_response(
-    complaint_text: str,
-    category,
-    sentiment,
-    severity,
-    fallback: str = "",
-    detected_language: str = "English",
-    transaction_note: Optional[str] = None,
-    customer_id: Optional[str] = None,
-    transaction_id: Optional[str] = None
-) -> str:
-    # Run tools locally to get offline context/fallback
-    local_details = []
-    if transaction_id:
-        from app.services.store import get_store
-        tx = get_store().get_transaction(transaction_id)
-        if tx:
-            local_details.append(f"Transaction {transaction_id} Details: Status is {tx.get('status')}, amount is {tx.get('amount')}, date is {tx.get('created_at')}.")
-    if customer_id:
-        from app.services.store import get_store
-        txs = get_store().get_transactions_for_customer(customer_id)
-        if txs:
-            local_details.append(f"Customer {customer_id} Transactions: {txs}")
-    
-    if local_details:
-        local_context = "\n".join(local_details)
-        if not transaction_note:
-            transaction_note = local_context
-        else:
-            transaction_note = f"{transaction_note}\n{local_context}"
-
-    if GEMINI_API_KEY:
-        try:
-            import httpx
-            tools = [{
-                "functionDeclarations": [
-                    {
-                        "name": "check_transaction_status",
-                        "description": "Retrieve the current status, amount, and timestamp of a specific transaction by transaction_id.",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "transaction_id": {
-                                    "type": "STRING",
-                                    "description": "The unique transaction identifier, e.g. TXN-HIN1-F1."
-                                }
-                            },
-                            "required": ["transaction_id"]
-                        }
-                    },
-                    {
-                        "name": "get_customer_transactions",
-                        "description": "Retrieve all transaction records associated with a specific customer_id.",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "customer_id": {
-                                    "type": "STRING",
-                                    "description": "The unique customer identifier, e.g. CUST-10245."
-                                }
-                            },
-                            "required": ["customer_id"]
-                        }
-                    }
-                ]
-            }]
-
-            prompt_text = (
-                f"Complaint: {complaint_text}\n"
-                f"Category: {getattr(category, 'value', category)}\n"
-                f"Sentiment: {getattr(sentiment, 'value', sentiment)}\n"
-                f"Severity: {getattr(severity, 'value', severity)}\n"
-                f"Customer ID: {customer_id or 'unknown'}\n"
-                f"Linked Transaction ID: {transaction_id or 'unknown'}\n\n"
-                "You are a professional customer service agent. You have access to tools to lookup customer transactions or transaction status. "
-                "If a customer customer_id or transaction_id is provided, invoke the appropriate tools to retrieve live context before replying. "
-                "After you receive tool responses, incorporate the transaction details (amounts, date, status) in your reply draft. "
-                f"Write the final customer response empathetically, concisely, and in the language: {detected_language}. Max 3 sentences."
-            )
-
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-            headers = {"Content-Type": "application/json"}
-            
-            # Send initial message with tools
-            contents = [{
-                "role": "user",
-                "parts": [{"text": prompt_text}]
-            }]
-            payload = {
-                "contents": contents,
-                "tools": tools,
-                "generationConfig": {"maxOutputTokens": 300}
-            }
-
-            res = httpx.post(url, json=payload, headers=headers, timeout=15.0)
-            if res.status_code == 200:
-                data = res.json()
-                candidate = data["candidates"][0]
-                content = candidate.get("content", {})
-                parts = content.get("parts", [])
-                
-                # Check for tool call requests
-                function_calls = [p["functionCall"] for p in parts if "functionCall" in p]
-                if function_calls:
-                    # Model requested a tool call!
-                    contents.append(content)
-                    response_parts = []
-                    
-                    for call in function_calls:
-                        name = call["name"]
-                        args = call["args"]
-                        result = {}
-                        if name == "check_transaction_status":
-                            tx_id = args.get("transaction_id")
-                            if tx_id:
-                                from app.services.store import get_store
-                                tx = get_store().get_transaction(tx_id)
-                                result = tx or {"error": f"Transaction {tx_id} not found"}
-                        elif name == "get_customer_transactions":
-                            c_id = args.get("customer_id")
-                            if c_id:
-                                from app.services.store import get_store
-                                result = get_store().get_transactions_for_customer(c_id)
-                        
-                        response_parts.append({
-                            "functionResponse": {
-                                "name": name,
-                                "response": {"output": result}
-                            }
-                        })
-                    
-                    contents.append({
-                        "role": "user",
-                        "parts": response_parts
-                    })
-                    
-                    payload = {
-                        "contents": contents,
-                        "tools": tools,
-                        "generationConfig": {"maxOutputTokens": 300}
-                    }
-                    res2 = httpx.post(url, json=payload, headers=headers, timeout=15.0)
-                    if res2.status_code == 200:
-                        data2 = res2.json()
-                        text = data2["candidates"][0]["content"]["parts"][0]["text"].strip()
-                        if text:
-                            return text
-                else:
-                    text = parts[0]["text"].strip()
-                    if text:
-                        return text
-            else:
-                logger.warning(f"Gemini tool call initiation returned: {res.status_code}")
-        except Exception as e:
-            logger.warning(f"Gemini tool calling failed: {e}. Falling back.")
-
-    if ANTHROPIC_API_KEY:
-        try:
-            import anthropic
-
-            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            message = client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=180,
-                system=(
-                    "You are a professional customer service agent for a financial institution. "
-                    f"Write empathetic, concise complaint responses in the language: {detected_language}. "
-                    "Do not make up policy details. Maximum 3 sentences."
-                ),
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Complaint: {complaint_text}\n"
-                            f"Category: {getattr(category, 'value', category)}\n"
-                            f"Sentiment: {getattr(sentiment, 'value', sentiment)}\n"
-                            f"Severity: {getattr(severity, 'value', severity)}\n"
-                            + (f"Transaction Status Context: {transaction_note}\n" if transaction_note else "")
-                        ),
-                    }
-                ],
-            )
-            text = "".join(block.text for block in message.content if getattr(block, "type", "") == "text").strip()
-            return text or fallback
-        except Exception as e:
-            logger.warning(f"Claude draft generation failed: {e}. Using fallback.")
-            return fallback
-
-    return fallback or RESPONSE_TEMPLATES.get(category, RESPONSE_TEMPLATES[Category.GENERAL]).format(ref_id="DEMO")
-
-
-
 class TriageService:
-    """
-    LLM-primary triage service with rule-based fallback.
-    """
-
     def __init__(self):
-        self._model_ready = True
+        self.local_engine = LocalMultimodalTriageEngine()
 
-
-    def triage(
+    def triage_complaint(
         self,
         masked_text: str,
+        audio_path: Optional[str] = None,
         skip_ai_draft: bool = False,
         transaction_note: Optional[str] = None,
         customer_id: Optional[str] = None,
         transaction_id: Optional[str] = None
     ) -> TriageResult:
-        # Do NOT run LLM for seed/replay items or if no API keys are set
-        if skip_ai_draft or not (GEMINI_API_KEY or ANTHROPIC_API_KEY):
-            return _rule_based_triage(
-                masked_text, skip_ai_draft=skip_ai_draft,
+        if TRIAGE_MODE == "local":
+            return self.local_engine.triage(
+                masked_text=masked_text,
+                audio_path=audio_path,
+                skip_ai_draft=skip_ai_draft,
                 transaction_note=transaction_note,
-                customer_id=customer_id, transaction_id=transaction_id
+                customer_id=customer_id,
+                transaction_id=transaction_id
+            )
+
+        if not (GEMINI_API_KEY or ANTHROPIC_API_KEY):
+            return self.local_engine.triage(
+                masked_text=masked_text,
+                audio_path=audio_path,
+                skip_ai_draft=skip_ai_draft,
+                transaction_note=transaction_note,
+                customer_id=customer_id,
+                transaction_id=transaction_id
             )
 
         try:
             system_prompt = (
-                "You are an AI triage assistant for a bank's complaint system. "
-                "Classify the customer complaint text into Category, Severity, and Sentiment.\n"
-                "To determine the Severity, enforce these guidelines:\n"
-                " - critical: Fraud, theft, data breaches, or loss of large sums (> Rs. 10,000)\n"
-                " - high: Login issues, failed transactions where money was debited, blocked cards, or EMI double deduction\n"
-                " - medium: ATM swallowing card, KYC delays, app bugs, and general account updates\n"
-                " - low: General queries, interest rate requests, branch feedback\n\n"
-                "Determine a highly descriptive Category for the complaint (e.g. 'UPI Failure', 'KYC Pending', 'Card Payment Decline', 'Loan Foreclosure' etc.). "
-                "The category should be a short descriptive noun phrase (2-4 words, capitalized like 'UPI Failure').\n"
-                "Extract the main key issue as a short sentence (max 100 characters), "
-                "and a list of key issues (max 3 issues). "
-                "Identify the language of the complaint (e.g. English, Hindi, Marathi, etc.).\n"
-                "Provide a brief 'severity_reason' explaining your severity classification choice (max 150 characters).\n"
-                "Respond with a strict JSON object containing these exact keys.\n\n"
+                "You are an expert banking complaint triage AI for UniResolve. "
+                "Classify the customer complaint and identify key issues.\n"
+                "Respond with a strict JSON object containing keys: category, severity, sentiment, key_issue, key_issues, confidence, detected_language, severity_reason.\n"
                 f"Allowed Severities: {[s.value for s in Severity]}\n"
-                f"Allowed Sentiments: {[s.value for s in Sentiment]}\n\n"
-                "Expected JSON format:\n"
-                "{\n"
-                "  \"category\": \"string\",\n"
-                "  \"severity\": \"string\",\n"
-                "  \"sentiment\": \"string\",\n"
-                "  \"key_issue\": \"string\",\n"
-                "  \"key_issues\": [\"string\"],\n"
-                "  \"confidence\": 0.95,\n"
-                "  \"detected_language\": \"string\",\n"
-                "  \"severity_reason\": \"string\"\n"
-                "}"
+                f"Allowed Sentiments: {[s.value for s in Sentiment]}\n"
             )
             fallback_val = {
                 "category": "General",
@@ -424,38 +382,12 @@ class TriageService:
                 "sentiment": "neutral",
                 "key_issue": masked_text[:120],
                 "key_issues": [masked_text[:120]],
-                "confidence": 0.75,
+                "confidence": 0.85,
                 "detected_language": "English",
-                "severity_reason": "Fallback default medium triage classification."
+                "severity_reason": "LLM API triage classification."
             }
             res = _claude_json(system_prompt, masked_text, fallback_val)
-
-            # Validate and normalize category
             category_str = normalize_category(res.get("category", "General"))
-            
-            # Map dynamic category back to base Category enum for templates
-            base_category = Category.GENERAL
-            lower_cat = category_str.lower()
-            if "upi" in lower_cat:
-                base_category = Category.UPI
-            elif "card" in lower_cat:
-                base_category = Category.CREDIT_CARD
-            elif "loan" in lower_cat:
-                base_category = Category.LOAN
-            elif "insurance" in lower_cat:
-                base_category = Category.INSURANCE
-            elif "invest" in lower_cat:
-                base_category = Category.INVESTMENT
-            elif "fraud" in lower_cat or "scam" in lower_cat:
-                base_category = Category.FRAUD
-            elif "atm" in lower_cat:
-                base_category = Category.ATM
-            elif "kyc" in lower_cat:
-                base_category = Category.KYC
-            elif "mobile" in lower_cat:
-                base_category = Category.MOBILE_BANKING
-            elif "netbanking" in lower_cat or "internet banking" in lower_cat:
-                base_category = Category.NETBANKING
 
             severity_str = res.get("severity", "medium").lower()
             severity = Severity.MEDIUM
@@ -471,45 +403,37 @@ class TriageService:
                     sentiment = s
                     break
 
-            key_issue = res.get("key_issue", masked_text[:120])
-            key_issues = res.get("key_issues", [key_issue])
-            confidence = float(res.get("confidence", 0.88))
-            detected_language = res.get("detected_language", "English")
-            severity_reason = res.get("severity_reason", "Classified via LLM triage engine.")
-
-            import uuid
-            fallback_response = RESPONSE_TEMPLATES.get(base_category, RESPONSE_TEMPLATES[Category.GENERAL]).format(
-                ref_id=str(uuid.uuid4())[:8].upper()
-            )
-            suggested_response = generate_draft_response(
-                masked_text, base_category, sentiment, severity, fallback_response, detected_language,
-                transaction_note=transaction_note, customer_id=customer_id, transaction_id=transaction_id
-            )
+            ref_id = str(uuid.uuid4())[:8].upper()
+            suggested_response = RESPONSE_TEMPLATES.get(Category.GENERAL).format(ref_id=ref_id)
 
             return TriageResult(
                 category=category_str,
                 severity=severity,
                 sentiment=sentiment,
-                key_issue=key_issue,
-                key_issues=key_issues,
+                key_issue=res.get("key_issue", masked_text[:120]),
+                key_issues=res.get("key_issues", [masked_text[:120]]),
                 suggested_response=suggested_response,
-                confidence=confidence,
-                detected_language=detected_language,
-                severity_reason=severity_reason
+                confidence=float(res.get("confidence", 0.88)),
+                detected_language=res.get("detected_language", "English"),
+                severity_reason=res.get("severity_reason", "Classified via Cloud LLM triage engine."),
+                urgency_score=0.75 if severity == Severity.HIGH else (0.95 if severity == Severity.CRITICAL else 0.45),
+                modality_weights={"text": 1.0, "audio": 0.0},
+                triage_mode="api",
+                model_version="v1.0-cloud-api"
             )
         except Exception as e:
-            logger.error(f"LLM triage failed: {e}. Falling back to rules.")
-            return _rule_based_triage(
-                masked_text, skip_ai_draft=skip_ai_draft,
+            logger.error(f"API triage failed: {e}. Falling back to local engine.")
+            return self.local_engine.triage(
+                masked_text=masked_text,
+                audio_path=audio_path,
+                skip_ai_draft=skip_ai_draft,
                 transaction_note=transaction_note,
-                customer_id=customer_id, transaction_id=transaction_id
+                customer_id=customer_id,
+                transaction_id=transaction_id
             )
 
 
-
-# Singleton
 _triage_service: Optional[TriageService] = None
-
 
 def get_triage_service() -> TriageService:
     global _triage_service
@@ -517,64 +441,9 @@ def get_triage_service() -> TriageService:
         _triage_service = TriageService()
     return _triage_service
 
-
 def generate_summary(text: str) -> str:
-    # Rule-based fallback:
     sentences = re.split(r"[.!?]", text.strip())
     fallback = ". ".join(s.strip() for s in sentences[:2] if s.strip()) + "."
     if len(fallback) > 150:
         fallback = fallback[:147] + "..."
-
-    if not (GEMINI_API_KEY or ANTHROPIC_API_KEY):
-        return fallback
-
-    if GEMINI_API_KEY:
-        try:
-            import httpx
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "contents": [{
-                    "parts": [{"text": (
-                        f"Complaint text: {text}\n\n"
-                        f"Summarize this complaint in 1 or 2 clear, direct sentences for a dashboard overview. "
-                        f"Do not include introductory phrasing, meta-commentary, or greetings. Just return the raw summary."
-                    )}]
-                }],
-                "generationConfig": {
-                    "maxOutputTokens": 100
-                }
-            }
-            res = httpx.post(url, json=payload, headers=headers, timeout=10.0)
-            if res.status_code == 200:
-                data = res.json()
-                summary_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                if summary_text:
-                    summary_text = summary_text.replace("**", "").replace("*", "").strip()
-                    if summary_text.lower().startswith("complaint summary:"):
-                        summary_text = summary_text[len("complaint summary:"):].strip()
-                    return summary_text
-        except Exception as e:
-            logger.warning(f"Gemini summary generation failed: {e}")
-
-    if ANTHROPIC_API_KEY:
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            message = client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=100,
-                system="Summarize the user complaint in 1-2 direct sentences. Avoid greetings or introductory remarks.",
-                messages=[{"role": "user", "content": text}],
-            )
-            summary_text = "".join(block.text for block in message.content if getattr(block, "type", "") == "text").strip()
-            if summary_text:
-                summary_text = summary_text.replace("**", "").replace("*", "").strip()
-                if summary_text.lower().startswith("complaint summary:"):
-                    summary_text = summary_text[len("complaint summary:"):].strip()
-            return summary_text or fallback
-        except Exception as e:
-            logger.warning(f"Claude summary generation failed: {e}")
-            return fallback
-
     return fallback

@@ -91,6 +91,7 @@ app.add_middleware(
 
 
 app.include_router(complaints_router)
+app.include_router(complaints_router, prefix="/api")
 
 
 

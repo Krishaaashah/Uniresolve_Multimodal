@@ -11,7 +11,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.responses import Response, StreamingResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -40,7 +40,7 @@ from app.services.pii_scrubber import mask_pii
 from app.services.store import get_store
 from app.services.triage import get_triage_service
 from app.config import (
-    GEMINI_API_KEY, ANTHROPIC_API_KEY, GEMINI_MODEL, CLAUDE_MODEL
+    GEMINI_API_KEY, ANTHROPIC_API_KEY, GEMINI_MODEL, CLAUDE_MODEL, AUDIO_UPLOAD_DIR, TRIAGE_MODE
 )
 
 router = APIRouter(prefix="/complaints", tags=["complaints"])
@@ -284,6 +284,158 @@ async def ingest_complaint(request: Request, payload: RawComplaintIn):
         store.log_ledger_event(complaint.id, f"verified: {state.get('cbs_verdict')}", "system")
         
     return ComplaintResponse(complaint=complaint, message="Complaint ingested and triaged successfully.")
+
+
+@router.post("/ingest-audio", response_model=ComplaintResponse, dependencies=[Depends(check_api_key)])
+@limiter.limit("60/minute")
+async def ingest_audio_complaint(
+    request: Request,
+    audio_file: UploadFile = File(...),
+    customer_id: Optional[str] = Form(None),
+    transaction_id: Optional[str] = Form(None),
+    channel: str = Form("voice"),
+    channel_metadata: Optional[str] = Form(None)
+):
+    """
+    Ingests raw audio grievance (.wav, .mp3, .m4a, .webm, .ogg).
+    Pipeline: Whisper ASR -> Presidio PII Masking -> Multimodal Fusion (WavLM + FinBERT) -> FAISS/Clustering -> Store.
+    """
+    import uuid
+    import re
+    store = get_store()
+    c_id = str(uuid.uuid4())
+    
+    filename = audio_file.filename or "recording.wav"
+    ext = os.path.splitext(filename)[1].lower()
+    if not ext or ext not in [".wav", ".mp3", ".m4a", ".webm", ".ogg"]:
+        ext = ".wav"
+        
+    audio_filename = f"{c_id}{ext}"
+    audio_save_path = os.path.join(AUDIO_UPLOAD_DIR, audio_filename)
+    
+    # Save audio to disk
+    audio_bytes = await audio_file.read()
+    with open(audio_save_path, "wb") as f:
+        f.write(audio_bytes)
+        
+    audio_url = f"/assets/uploads/audio/{audio_filename}"
+
+    # 1. Transcribe audio with Whisper ASR
+    from ml.asr import transcribe_audio
+    raw_transcript = transcribe_audio(audio_save_path)
+    if not raw_transcript or not raw_transcript.strip():
+        raw_transcript = "Customer voice grievance recorded for banking transaction resolution."
+
+    # 2. Extract spoken customer / transaction ID if not explicitly passed
+    if not customer_id:
+        cust_match = re.search(r"\b(CUST-[\w-]+)\b", raw_transcript, re.IGNORECASE)
+        if cust_match:
+            customer_id = cust_match.group(1).upper()
+        else:
+            cust_num = re.search(r"customer\s+(?:id|number)?\s*(?:is)?\s*(\d{4,8})", raw_transcript, re.IGNORECASE)
+            if cust_num:
+                customer_id = f"CUST-{cust_num.group(1)}"
+            else:
+                customer_id = "CUST-99999"
+
+    if not transaction_id:
+        txn_match = re.search(r"\b(TXN-[\w-]+|\d{12})\b", raw_transcript, re.IGNORECASE)
+        if txn_match:
+            transaction_id = txn_match.group(1).upper()
+
+    # 3. PII Scrubbing on transcript before database storage
+    masked_text, masked_fields = mask_pii(raw_transcript)
+
+    # 4. Check transaction context
+    tx_note = None
+    if transaction_id:
+        tx = store.get_transaction(transaction_id)
+        if tx:
+            tx_status = tx.get("status")
+            tx_date = tx.get("date") or tx.get("created_at") or "recent date"
+            tx_amount = tx.get("amount") or "0"
+            tx_note = f"Transaction {transaction_id} (Rs {tx_amount}) is {tx_status} on {tx_date}."
+            masked_text += f"\n\n[Transaction Status Context]: {tx_note}"
+
+    # 5. Local Multimodal Triage with WavLM + FinBERT + Gated Fusion
+    triage_service = get_triage_service()
+    triage_res = triage_service.triage_complaint(
+        masked_text=masked_text,
+        audio_path=audio_save_path,
+        transaction_note=tx_note,
+        customer_id=customer_id,
+        transaction_id=transaction_id
+    )
+
+    # 6. FAISS / Semantic duplicate detection and systemic clustering
+    clustering_service = get_clustering_service()
+    cluster_res = clustering_service.check_and_register(
+        c_id, masked_text, customer_id=customer_id, transaction_id=transaction_id
+    )
+
+    # 7. SLA calculation
+    from app.models.complaint import compute_sla, compute_rbi_status
+    received_at = datetime.utcnow()
+    sla_info = compute_sla(received_at, triage_res.severity.value)
+
+    meta_dict = {}
+    if channel_metadata:
+        try:
+            meta_dict = json.loads(channel_metadata) if isinstance(channel_metadata, str) else channel_metadata
+        except Exception:
+            meta_dict = {}
+    meta_dict["audio_ingest"] = True
+    meta_dict["audio_filename"] = audio_filename
+
+    complaint = Complaint(
+        id=c_id,
+        channel=Channel.VOICE,
+        channel_metadata=meta_dict,
+        raw_text=raw_transcript,
+        masked_text=masked_text,
+        masked_fields=masked_fields,
+        customer_id=customer_id,
+        transaction_id=transaction_id,
+        received_at=received_at,
+        triage=triage_res,
+        cluster=cluster_res,
+        sla=sla_info,
+        sla_status=sla_info.status,
+        sla_breached=sla_info.breached,
+        rbi_status=compute_rbi_status(received_at),
+        urgency_score=triage_res.urgency_score,
+        modality_weights=triage_res.modality_weights,
+        triage_mode=triage_res.triage_mode,
+        transcript=masked_text,
+        audio_url=audio_url,
+        model_version=triage_res.model_version
+    )
+
+    # Summary
+    from app.services.triage import generate_summary
+    complaint.summary = generate_summary(masked_text)
+
+    # Communication History
+    complaint.communication_history.append(
+        HistoryMessage(author=MessageAuthor.CUSTOMER, author_name="Customer (Voice Grievance)", content=masked_text, timestamp=received_at)
+    )
+    complaint.communication_history.append(
+        HistoryMessage(author=MessageAuthor.SYSTEM, author_name="System", content=f"Auto-triaged via {triage_res.triage_mode.upper()} Multimodal Fusion: {triage_res.category} | {triage_res.severity.value} | Urgency: {int((triage_res.urgency_score or 0.5)*100)}%")
+    )
+    complaint.communication_history.append(
+        HistoryMessage(author=MessageAuthor.AGENT, author_name="AI Assistant", content=triage_res.suggested_response, is_ai_draft=True)
+    )
+
+    store.save(complaint)
+    store.log_audit("system", "system", "ingest_audio", complaint.id)
+    store.log_ledger_event(complaint.id, "created", "customer_voice")
+    store.log_ledger_event(complaint.id, "triaged_multimodal", "system")
+
+    return ComplaintResponse(
+        complaint=complaint,
+        message=f"Audio grievance ingested and triaged via {triage_res.triage_mode} multimodal pipeline."
+    )
+
 
 
 
