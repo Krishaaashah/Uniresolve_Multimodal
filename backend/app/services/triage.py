@@ -338,6 +338,25 @@ def _rule_based_triage(
 class TriageService:
     def __init__(self):
         self.local_engine = LocalMultimodalTriageEngine()
+        self._model_ready = True
+
+    def triage(
+        self,
+        masked_text: str,
+        audio_path: Optional[str] = None,
+        skip_ai_draft: bool = False,
+        transaction_note: Optional[str] = None,
+        customer_id: Optional[str] = None,
+        transaction_id: Optional[str] = None
+    ) -> TriageResult:
+        return self.triage_complaint(
+            masked_text=masked_text,
+            audio_path=audio_path,
+            skip_ai_draft=skip_ai_draft,
+            transaction_note=transaction_note,
+            customer_id=customer_id,
+            transaction_id=transaction_id
+        )
 
     def triage_complaint(
         self,
@@ -447,3 +466,34 @@ def generate_summary(text: str) -> str:
     if len(fallback) > 150:
         fallback = fallback[:147] + "..."
     return fallback
+
+
+def generate_draft_response(
+    complaint_text: str = "",
+    category: Any = "general",
+    sentiment: Any = "neutral",
+    severity: Any = "medium",
+    fallback_response: str = "",
+    detected_language: str = "English",
+    transaction_note: Optional[str] = None,
+    customer_id: Optional[str] = None,
+    transaction_id: Optional[str] = None,
+    **kwargs
+) -> str:
+    ref_id = str(uuid.uuid4())[:8].upper()
+    cat_enum = Category.GENERAL
+    if isinstance(category, Category):
+        cat_enum = category
+    elif isinstance(category, str):
+        for c in Category:
+            if c.value.lower() == category.lower() or c.name.lower() == category.lower():
+                cat_enum = c
+                break
+    template = fallback_response or RESPONSE_TEMPLATES.get(cat_enum, RESPONSE_TEMPLATES[Category.GENERAL])
+    if "{ref_id}" in template:
+        response = template.format(ref_id=ref_id)
+    else:
+        response = template
+    if transaction_note:
+        response += f" ({transaction_note})"
+    return response
