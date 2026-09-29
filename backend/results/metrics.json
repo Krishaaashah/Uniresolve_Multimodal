@@ -1,0 +1,721 @@
+{
+  "dataset_summary": {
+    "total_samples": 1500,
+    "train_samples": 1050,
+    "val_samples": 222,
+    "test_samples": 228,
+    "categories": [
+      "Loans",
+      "Accounts",
+      "Credit Cards",
+      "UPI/Payments",
+      "Transaction Errors",
+      "KYC/Verification"
+    ],
+    "severities": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "gold_annotated_test_count": 228
+  },
+  "experiments": {
+    "E0_API": {
+      "name": "E0: Current API Triage",
+      "status": "not run",
+      "notes": "External LLM API keys (GEMINI_API_KEY / ANTHROPIC_API_KEY) not configured in environment."
+    },
+    "E1_TFIDF": {
+      "name": "E1: TF-IDF + LogReg",
+      "category": {
+        "accuracy": 1.0,
+        "macro_f1": 1.0,
+        "per_class_f1": {
+          "Loans": 1.0,
+          "Accounts": 1.0,
+          "Credit Cards": 1.0,
+          "UPI/Payments": 1.0,
+          "Transaction Errors": 1.0,
+          "KYC/Verification": 1.0
+        },
+        "confusion_matrix": [
+          [
+            38,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            38,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            38,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            38,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            38,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            38
+          ]
+        ]
+      },
+      "severity": {
+        "accuracy": 0.9956,
+        "macro_f1": 0.9688,
+        "per_class_f1": {
+          "low": 0.9091,
+          "medium": 0.9973,
+          "high": 1.0
+        },
+        "confusion_matrix": [
+          [
+            5,
+            0,
+            0
+          ],
+          [
+            1,
+            183,
+            0
+          ],
+          [
+            0,
+            0,
+            39
+          ]
+        ]
+      },
+      "latency_ms": 0.12
+    },
+    "text_only": {
+      "model_type": "text_only",
+      "category": {
+        "accuracy_mean": 1.0,
+        "accuracy_std": 0.0,
+        "macro_f1_mean": 1.0,
+        "macro_f1_std": 0.0,
+        "per_class_f1": {
+          "Loans": 1.0,
+          "Accounts": 1.0,
+          "Credit Cards": 1.0,
+          "UPI/Payments": 1.0,
+          "Transaction Errors": 1.0,
+          "KYC/Verification": 1.0
+        },
+        "confusion_matrix": [
+          [
+            38,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            38,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            38,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            38,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            38,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            38
+          ]
+        ]
+      },
+      "severity": {
+        "accuracy_mean": 0.9971,
+        "accuracy_std": 0.0021,
+        "macro_f1_mean": 0.9792,
+        "macro_f1_std": 0.0147,
+        "per_class_f1": {
+          "low": 0.9091,
+          "medium": 0.9973,
+          "high": 1.0
+        },
+        "confusion_matrix": [
+          [
+            5,
+            0,
+            0
+          ],
+          [
+            1,
+            183,
+            0
+          ],
+          [
+            0,
+            0,
+            39
+          ]
+        ]
+      },
+      "latency_ms_mean": 0.03,
+      "latency_ms_std": 0.0
+    },
+    "audio_only": {
+      "model_type": "audio_only",
+      "category": {
+        "accuracy_mean": 0.1842,
+        "accuracy_std": 0.0062,
+        "macro_f1_mean": 0.1557,
+        "macro_f1_std": 0.012,
+        "per_class_f1": {
+          "Loans": 0.1311,
+          "Accounts": 0.0,
+          "Credit Cards": 0.0444,
+          "UPI/Payments": 0.1266,
+          "Transaction Errors": 0.274,
+          "KYC/Verification": 0.2667
+        },
+        "confusion_matrix": [
+          [
+            4,
+            1,
+            1,
+            10,
+            18,
+            4
+          ],
+          [
+            5,
+            0,
+            2,
+            11,
+            15,
+            5
+          ],
+          [
+            4,
+            3,
+            1,
+            6,
+            15,
+            9
+          ],
+          [
+            5,
+            4,
+            1,
+            5,
+            21,
+            2
+          ],
+          [
+            1,
+            3,
+            1,
+            6,
+            20,
+            7
+          ],
+          [
+            4,
+            1,
+            1,
+            3,
+            19,
+            10
+          ]
+        ]
+      },
+      "severity": {
+        "accuracy_mean": 0.807,
+        "accuracy_std": 0.0,
+        "macro_f1_mean": 0.2977,
+        "macro_f1_std": 0.0,
+        "per_class_f1": {
+          "low": 0.0,
+          "medium": 0.8932,
+          "high": 0.0
+        },
+        "confusion_matrix": [
+          [
+            0,
+            5,
+            0
+          ],
+          [
+            0,
+            184,
+            0
+          ],
+          [
+            0,
+            39,
+            0
+          ]
+        ]
+      },
+      "latency_ms_mean": 0.03,
+      "latency_ms_std": 0.0
+    },
+    "early_fusion": {
+      "model_type": "early_fusion",
+      "category": {
+        "accuracy_mean": 0.9971,
+        "accuracy_std": 0.0021,
+        "macro_f1_mean": 0.9971,
+        "macro_f1_std": 0.0021,
+        "per_class_f1": {
+          "Loans": 0.9867,
+          "Accounts": 1.0,
+          "Credit Cards": 1.0,
+          "UPI/Payments": 0.987,
+          "Transaction Errors": 1.0,
+          "KYC/Verification": 1.0
+        },
+        "confusion_matrix": [
+          [
+            37,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            38,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            38,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            38,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            38,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            38
+          ]
+        ]
+      },
+      "severity": {
+        "accuracy_mean": 0.9956,
+        "accuracy_std": 0.0,
+        "macro_f1_mean": 0.9688,
+        "macro_f1_std": 0.0,
+        "per_class_f1": {
+          "low": 0.9091,
+          "medium": 0.9973,
+          "high": 1.0
+        },
+        "confusion_matrix": [
+          [
+            5,
+            0,
+            0
+          ],
+          [
+            1,
+            183,
+            0
+          ],
+          [
+            0,
+            0,
+            39
+          ]
+        ]
+      },
+      "latency_ms_mean": 0.02,
+      "latency_ms_std": 0.0
+    },
+    "late_fusion": {
+      "model_type": "late_fusion",
+      "category": {
+        "accuracy_mean": 1.0,
+        "accuracy_std": 0.0,
+        "macro_f1_mean": 1.0,
+        "macro_f1_std": 0.0,
+        "per_class_f1": {
+          "Loans": 1.0,
+          "Accounts": 1.0,
+          "Credit Cards": 1.0,
+          "UPI/Payments": 1.0,
+          "Transaction Errors": 1.0,
+          "KYC/Verification": 1.0
+        },
+        "confusion_matrix": [
+          [
+            38,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            38,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            38,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            38,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            38,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            38
+          ]
+        ]
+      },
+      "severity": {
+        "accuracy_mean": 0.9956,
+        "accuracy_std": 0.0,
+        "macro_f1_mean": 0.9688,
+        "macro_f1_std": 0.0,
+        "per_class_f1": {
+          "low": 0.9091,
+          "medium": 0.9973,
+          "high": 1.0
+        },
+        "confusion_matrix": [
+          [
+            5,
+            0,
+            0
+          ],
+          [
+            1,
+            183,
+            0
+          ],
+          [
+            0,
+            0,
+            39
+          ]
+        ]
+      },
+      "latency_ms_mean": 0.03,
+      "latency_ms_std": 0.01
+    },
+    "gated_fusion": {
+      "model_type": "gated_fusion",
+      "category": {
+        "accuracy_mean": 1.0,
+        "accuracy_std": 0.0,
+        "macro_f1_mean": 1.0,
+        "macro_f1_std": 0.0,
+        "per_class_f1": {
+          "Loans": 1.0,
+          "Accounts": 1.0,
+          "Credit Cards": 1.0,
+          "UPI/Payments": 1.0,
+          "Transaction Errors": 1.0,
+          "KYC/Verification": 1.0
+        },
+        "confusion_matrix": [
+          [
+            38,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            38,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            38,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            38,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            38,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            38
+          ]
+        ]
+      },
+      "severity": {
+        "accuracy_mean": 1.0,
+        "accuracy_std": 0.0,
+        "macro_f1_mean": 1.0,
+        "macro_f1_std": 0.0,
+        "per_class_f1": {
+          "low": 1.0,
+          "medium": 1.0,
+          "high": 1.0
+        },
+        "confusion_matrix": [
+          [
+            5,
+            0,
+            0
+          ],
+          [
+            0,
+            184,
+            0
+          ],
+          [
+            0,
+            0,
+            39
+          ]
+        ]
+      },
+      "latency_ms_mean": 0.04,
+      "latency_ms_std": 0.0
+    },
+    "E6_missing_audio_resilience": {
+      "model_type": "gated_fusion",
+      "category": {
+        "accuracy_mean": 1.0,
+        "accuracy_std": 0.0,
+        "macro_f1_mean": 1.0,
+        "macro_f1_std": 0.0,
+        "per_class_f1": {
+          "Loans": 1.0,
+          "Accounts": 1.0,
+          "Credit Cards": 1.0,
+          "UPI/Payments": 1.0,
+          "Transaction Errors": 1.0,
+          "KYC/Verification": 1.0
+        },
+        "confusion_matrix": [
+          [
+            38,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            38,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            38,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            38,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            38,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            38
+          ]
+        ]
+      },
+      "severity": {
+        "accuracy_mean": 1.0,
+        "accuracy_std": 0.0,
+        "macro_f1_mean": 1.0,
+        "macro_f1_std": 0.0,
+        "per_class_f1": {
+          "low": 1.0,
+          "medium": 1.0,
+          "high": 1.0
+        },
+        "confusion_matrix": [
+          [
+            5,
+            0,
+            0
+          ],
+          [
+            0,
+            184,
+            0
+          ],
+          [
+            0,
+            0,
+            39
+          ]
+        ]
+      },
+      "latency_ms_mean": 0.05,
+      "latency_ms_std": 0.01
+    },
+    "E6_noise_robustness": {
+      "clean": {
+        "cat_f1": 1.0,
+        "sev_f1": 1.0
+      },
+      "snr_20": {
+        "cat_f1": 1.0,
+        "sev_f1": 1.0
+      },
+      "snr_10": {
+        "cat_f1": 1.0,
+        "sev_f1": 1.0
+      },
+      "snr_5": {
+        "cat_f1": 1.0,
+        "sev_f1": 1.0
+      }
+    }
+  }
+}

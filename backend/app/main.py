@@ -140,8 +140,8 @@ async def health():
 @app.post("/admin/seed")
 async def reseed_demo(current_user: dict = Depends(require_role(["admin"]))):
     try:
-        from app.seed import main as seed_main
-        seed_main()
+        from app.seed import seed_demo_dataset
+        seed_demo_dataset()
         get_store().log_audit(current_user["username"], current_user["role"], "reseed")
         return {"seeded": True, "message": "Demo data reset successfully."}
     except Exception as e:

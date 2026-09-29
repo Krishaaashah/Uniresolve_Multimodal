@@ -333,23 +333,38 @@ export default function DetailModal({
             const isImage = att.type.startsWith("image/");
             const isAudio = att.type.startsWith("audio/");
             const isVideo = att.type.startsWith("video/");
+            const fileUrl = att.url.startsWith("/") || att.url.startsWith("http") ? att.url : `/${att.url}`;
 
             return (
               <div key={idx} className="p-3 border border-slate-200 rounded-lg bg-white shadow-sm flex flex-col gap-2">
-                <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
-                  <FileText className="h-4 w-4 text-slate-400" />
-                  Evidence File #{idx + 1}
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-slate-400" />
+                    Evidence File #{idx + 1}
+                  </div>
+                  {isAudio && (
+                    <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-bold border border-blue-100">
+                      IVR Speech Note (Audible)
+                    </span>
+                  )}
+                  {isImage && (
+                    <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-100">
+                      OCR Evidence Image
+                    </span>
+                  )}
                 </div>
                 {isImage && (
-                  <a href={att.url} target="_blank" rel="noreferrer" className="block max-w-full">
-                    <img src={att.url} alt="Evidence" className="max-h-60 rounded border object-contain mx-auto bg-slate-50 cursor-zoom-in hover:scale-[1.01] transition-transform duration-250" />
+                  <a href={fileUrl} target="_blank" rel="noreferrer" className="block max-w-full">
+                    <img src={fileUrl} alt="Evidence" className="max-h-60 rounded border object-contain mx-auto bg-slate-50 cursor-zoom-in hover:scale-[1.01] transition-transform duration-250" />
                   </a>
                 )}
                 {isAudio && (
-                  <audio controls src={att.url} className="w-full mt-1 outline-none" />
+                  <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                    <audio controls src={fileUrl} className="w-full outline-none" preload="auto" />
+                  </div>
                 )}
                 {isVideo && (
-                  <video controls src={att.url} className="w-full max-h-72 rounded border bg-black mt-1" />
+                  <video controls src={fileUrl} className="w-full max-h-72 rounded border bg-black mt-1" />
                 )}
               </div>
             );

@@ -20,3 +20,16 @@ backend/frontend/
 *.bin
 faiss_index.bin
 cluster_map.json
+
+# Competition Datasets and TSV outputs
+*.zip
+*.tsv
+student_resource.zip
+business_entity_resolution/dataset/
+business_entity_resolution/output/*.tsv
+
+# Large datasets, audio files, and cache
+backend/ml/data/audio/
+backend/ml/data/cache/
+*.pt
+*.wav

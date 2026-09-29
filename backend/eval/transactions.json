@@ -1,0 +1,344 @@
+{
+  "TXN-20001-A": {
+    "transaction_id": "TXN-20001-A",
+    "customer_id": "CUST-20001",
+    "amount": "₹2,500.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "upi",
+    "description": "UPI/GPay Transfer Failed"
+  },
+  "TXN-20002-A": {
+    "transaction_id": "TXN-20002-A",
+    "customer_id": "CUST-20002",
+    "amount": "₹3,200.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "upi",
+    "description": "UPI/PhonePe Gateway Timeout"
+  },
+  "TXN-20003-A": {
+    "transaction_id": "TXN-20003-A",
+    "customer_id": "CUST-20003",
+    "amount": "₹1,800.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "upi",
+    "description": "UPI QuickMart Merchant Timeout"
+  },
+  "TXN-20004-A": {
+    "transaction_id": "TXN-20004-A",
+    "customer_id": "CUST-20004",
+    "amount": "₹4,500.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "upi",
+    "description": "UPI Retail Store Failed"
+  },
+  "TXN-20005-A": {
+    "transaction_id": "TXN-20005-A",
+    "customer_id": "CUST-20005",
+    "amount": "₹2,100.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "upi",
+    "description": "UPI Transfer Timeout"
+  },
+  "TXN-20002-B": {
+    "transaction_id": "TXN-20002-B",
+    "customer_id": "CUST-20002",
+    "amount": "₹5,000.00",
+    "status": "failed",
+    "date": "2026-08-24",
+    "channel": "atm",
+    "description": "ATM Cash Dispense Machine Error"
+  },
+  "TXN-20010-F": {
+    "transaction_id": "TXN-20010-F",
+    "customer_id": "CUST-20010",
+    "amount": "₹45,000.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "card",
+    "description": "Card POS International Charge Disputed"
+  },
+  "TXN-20011-E": {
+    "transaction_id": "TXN-20011-E",
+    "customer_id": "CUST-20011",
+    "amount": "₹18,450.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "app",
+    "description": "EMI/Home Loan Double Debit Duplicate"
+  },
+  "TXN-20015-C": {
+    "transaction_id": "TXN-20015-C",
+    "customer_id": "CUST-20015",
+    "amount": "₹3,500.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "card",
+    "description": "Card POS Debit Swipe Blocked"
+  },
+  "TXN-20017-H": {
+    "transaction_id": "TXN-20017-H",
+    "customer_id": "CUST-20017",
+    "amount": "₹15,000.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "branch",
+    "description": "Cheque Inward Clearing Return"
+  },
+  "TXN-20018-H": {
+    "transaction_id": "TXN-20018-H",
+    "customer_id": "CUST-20018",
+    "amount": "₹2,000.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "upi",
+    "description": "UPI Transfer Failed Hindi"
+  },
+  "TXN-20023-H": {
+    "transaction_id": "TXN-20023-H",
+    "customer_id": "CUST-20023",
+    "amount": "₹25,000.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "card",
+    "description": "Unauthorized Card Charge Hindi"
+  },
+  "TXN-20029-H": {
+    "transaction_id": "TXN-20029-H",
+    "customer_id": "CUST-20029",
+    "amount": "₹12,000.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "app",
+    "description": "EMI Double Deduction Hindi"
+  },
+  "TXN-20034-M": {
+    "transaction_id": "TXN-20034-M",
+    "customer_id": "CUST-20034",
+    "amount": "₹18,450.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "app",
+    "description": "Home Loan EMI Marathi"
+  },
+  "TXN-20036-M": {
+    "transaction_id": "TXN-20036-M",
+    "customer_id": "CUST-20036",
+    "amount": "₹3,000.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "upi",
+    "description": "UPI Failure Marathi"
+  },
+  "TXN-20041-M": {
+    "transaction_id": "TXN-20041-M",
+    "customer_id": "CUST-20041",
+    "amount": "₹35,000.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "card",
+    "description": "Credit Card Fraud Marathi"
+  },
+  "TXN-20042-HG": {
+    "transaction_id": "TXN-20042-HG",
+    "customer_id": "CUST-20042",
+    "amount": "₹12,000.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "netbanking",
+    "description": "IMPS Transfer Pending Hinglish"
+  },
+  "TXN-20044-HG": {
+    "transaction_id": "TXN-20044-HG",
+    "customer_id": "CUST-20044",
+    "amount": "₹4,000.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "atm",
+    "description": "ATM Cash Stuck Hinglish"
+  },
+  "TXN-20050-HN1A": {
+    "transaction_id": "TXN-20050-HN1A",
+    "customer_id": "CUST-20050",
+    "amount": "₹1,500.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "upi",
+    "description": "UPI Swiggy Food Merchant"
+  },
+  "TXN-20051-HN1B": {
+    "transaction_id": "TXN-20051-HN1B",
+    "customer_id": "CUST-20051",
+    "amount": "₹1,500.00",
+    "status": "success",
+    "date": "2026-09-01",
+    "channel": "upi",
+    "description": "UPI Peer Transfer Reversal"
+  },
+  "TXN-20052-HN2A": {
+    "transaction_id": "TXN-20052-HN2A",
+    "customer_id": "CUST-20052",
+    "amount": "₹8,000.00",
+    "status": "failed",
+    "date": "2026-08-31",
+    "channel": "atm",
+    "description": "ATM Cash Dispenser Stuck"
+  },
+  "TXN-20056-HN4A": {
+    "transaction_id": "TXN-20056-HN4A",
+    "customer_id": "CUST-20056",
+    "amount": "₹55,000.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "card",
+    "description": "Unauthorized POS Tokyo"
+  },
+  "TXN-20058-HN5A": {
+    "transaction_id": "TXN-20058-HN5A",
+    "customer_id": "CUST-20058",
+    "amount": "₹22,000.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "app",
+    "description": "Home Loan EMI Duplicate"
+  },
+  "TXN-20064-HN8A": {
+    "transaction_id": "TXN-20064-HN8A",
+    "customer_id": "CUST-20064",
+    "amount": "₹50,000.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "branch",
+    "description": "Cheque Signature Mismatch"
+  },
+  "TXN-20066-HN9A": {
+    "transaction_id": "TXN-20066-HN9A",
+    "customer_id": "CUST-20066",
+    "amount": "₹30,000.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "branch",
+    "description": "Inward Cheque Return Insufficient Funds"
+  },
+  "TXN-20068-HN10A": {
+    "transaction_id": "TXN-20068-HN10A",
+    "customer_id": "CUST-20068",
+    "amount": "₹5,000.00",
+    "status": "failed",
+    "date": "2026-08-31",
+    "channel": "netbanking",
+    "description": "NACH Mandate Mutual Fund Failed"
+  },
+  "TXN-20074-HN13A": {
+    "transaction_id": "TXN-20074-HN13A",
+    "customer_id": "CUST-20074",
+    "amount": "₹1,25,000.00",
+    "status": "pending",
+    "date": "2026-08-30",
+    "channel": "netbanking",
+    "description": "FCNR Foreign Inward Wire"
+  },
+  "TXN-20075-HN13B": {
+    "transaction_id": "TXN-20075-HN13B",
+    "customer_id": "CUST-20075",
+    "amount": "₹2,50,000.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "netbanking",
+    "description": "RTGS Real Time Settlement Delayed"
+  },
+  "TXN-20078-HN15A": {
+    "transaction_id": "TXN-20078-HN15A",
+    "customer_id": "CUST-20078",
+    "amount": "₹450.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "upi",
+    "description": "Fastag Toll Double Deduction"
+  },
+  "TXN-20080-PII": {
+    "transaction_id": "TXN-20080-PII",
+    "customer_id": "CUST-20080",
+    "amount": "₹12,400.00",
+    "status": "failed",
+    "date": "2026-09-01",
+    "channel": "card",
+    "description": "Disputed Card Transaction PII"
+  },
+  "TXN-20081-PII": {
+    "transaction_id": "TXN-20081-PII",
+    "customer_id": "CUST-20081",
+    "amount": "₹7,500.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "card",
+    "description": "Card Fraud Online POS"
+  },
+  "TXN-20088-F": {
+    "transaction_id": "TXN-20088-F",
+    "customer_id": "CUST-20088",
+    "amount": "₹75,000.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "upi",
+    "description": "Phishing VPA Collect Request"
+  },
+  "TXN-20089-A": {
+    "transaction_id": "TXN-20089-A",
+    "customer_id": "CUST-20089",
+    "amount": "₹10,000.00",
+    "status": "failed",
+    "date": "2026-08-30",
+    "channel": "atm",
+    "description": "ATM Cash Shortage Dispense"
+  },
+  "TXN-20091-DD": {
+    "transaction_id": "TXN-20091-DD",
+    "customer_id": "CUST-20091",
+    "amount": "₹6,400.00",
+    "status": "failed",
+    "date": "2026-08-31",
+    "channel": "card",
+    "description": "POS Double Debit Electronics"
+  },
+  "TXN-20097-U": {
+    "transaction_id": "TXN-20097-U",
+    "customer_id": "CUST-20097",
+    "amount": "₹850.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "upi",
+    "description": "UPI Static QR Scanner Failed"
+  },
+  "TXN-20105-DD": {
+    "transaction_id": "TXN-20105-DD",
+    "customer_id": "CUST-20105",
+    "amount": "₹14,500.00",
+    "status": "failed",
+    "date": "2026-08-31",
+    "channel": "netbanking",
+    "description": "Car Loan EMI Duplicate Auto Debit"
+  },
+  "TXN-20098-C": {
+    "transaction_id": "TXN-20098-C",
+    "customer_id": "CUST-20098",
+    "amount": "₹1,200.00",
+    "status": "failed",
+    "date": "2026-08-29",
+    "channel": "card",
+    "description": "Foreign Currency Markup Dispute"
+  },
+  "TXN-20107-F": {
+    "transaction_id": "TXN-20107-F",
+    "customer_id": "CUST-20107",
+    "amount": "₹15,000.00",
+    "status": "failed",
+    "date": "2026-09-02",
+    "channel": "upi",
+    "description": "Malicious UPI QR Phishing"
+  }
+}

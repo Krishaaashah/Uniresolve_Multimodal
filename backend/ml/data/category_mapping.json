@@ -1,0 +1,57 @@
+{
+  "cfpb_product_mapping": {
+    "Mortgage": "Loans",
+    "Student loan": "Loans",
+    "Vehicle loan or lease": "Loans",
+    "Payday loan, title loan, or personal loan": "Loans",
+    "Consumer Loan": "Loans",
+    "Payday loan": "Loans",
+    "Checking or savings account": "Accounts",
+    "Bank account or service": "Accounts",
+    "Money market account": "Accounts",
+    "Certificate of deposit (CD)": "Accounts",
+    "Credit card or prepaid card": "Credit Cards",
+    "Credit card": "Credit Cards",
+    "Prepaid card": "Credit Cards",
+    "Money transfer, virtual currency, or money service": "UPI/Payments",
+    "Money transfers": "UPI/Payments",
+    "Virtual currency": "UPI/Payments",
+    "ATM / Cash Error": "Transaction Errors",
+    "POS Terminal Double Deduction": "Transaction Errors",
+    "Transaction Failure": "Transaction Errors"
+  },
+  "synthetic_category_mapping": {
+    "Loans": "Loans",
+    "Loan Foreclosure": "Loans",
+    "Loan": "Loans",
+    "Accounts": "Accounts",
+    "Account Services": "Accounts",
+    "Account": "Accounts",
+    "Credit Cards": "Credit Cards",
+    "Credit Card": "Credit Cards",
+    "Card Blocking": "Credit Cards",
+    "UPI/Payments": "UPI/Payments",
+    "UPI Failure": "UPI/Payments",
+    "UPI": "UPI/Payments",
+    "Transaction Errors": "Transaction Errors",
+    "Double Deduction": "Transaction Errors",
+    "ATM Failure": "Transaction Errors",
+    "ATM": "Transaction Errors",
+    "KYC/Verification": "KYC/Verification",
+    "KYC Verification": "KYC/Verification",
+    "KYC": "KYC/Verification"
+  },
+  "target_categories": [
+    "Loans",
+    "Accounts",
+    "Credit Cards",
+    "UPI/Payments",
+    "Transaction Errors",
+    "KYC/Verification"
+  ],
+  "target_severities": [
+    "low",
+    "medium",
+    "high"
+  ]
+}

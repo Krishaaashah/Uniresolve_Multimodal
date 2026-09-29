@@ -1,0 +1,1085 @@
+{
+  "files": [
+    {
+      "file": "dataset/train/train_source1.tsv",
+      "size_uncompressed_mb": 200.34,
+      "size_compressed_mb": 82.58,
+      "rows": 2206821,
+      "columns": 4,
+      "header": [
+        "entity_id",
+        "business_name",
+        "business_address",
+        "country"
+      ],
+      "likely_purpose": "Train Source 1 (Reference)"
+    },
+    {
+      "file": "dataset/train/train_source2.tsv",
+      "size_uncompressed_mb": 466.63,
+      "size_compressed_mb": 210.92,
+      "rows": 5034616,
+      "columns": 4,
+      "header": [
+        "entity_id",
+        "business_name",
+        "business_address",
+        "country"
+      ],
+      "likely_purpose": "Train Source 2 (Noisy Target)"
+    },
+    {
+      "file": "dataset/train/train_source3.tsv",
+      "size_uncompressed_mb": 480.37,
+      "size_compressed_mb": 211.04,
+      "rows": 5285603,
+      "columns": 4,
+      "header": [
+        "entity_id",
+        "business_name",
+        "business_address",
+        "country"
+      ],
+      "likely_purpose": "Train Source 3 (Noisy Target)"
+    },
+    {
+      "file": "dataset/train/train_ground_truth.tsv",
+      "size_uncompressed_mb": 121.13,
+      "size_compressed_mb": 52.1,
+      "rows": 2206821,
+      "columns": 2,
+      "header": [
+        "source1_entity_id",
+        "matched_entity_ids"
+      ],
+      "likely_purpose": "Train Ground Truth Labels"
+    },
+    {
+      "file": "dataset/test/test_source1.tsv",
+      "size_uncompressed_mb": 166.91,
+      "size_compressed_mb": 66.44,
+      "rows": 1732544,
+      "columns": 4,
+      "header": [
+        "entity_id",
+        "business_name",
+        "business_address",
+        "country"
+      ],
+      "likely_purpose": "Test Source 1 (Reference / Query)"
+    },
+    {
+      "file": "dataset/test/test_source2.tsv",
+      "size_uncompressed_mb": 485.86,
+      "size_compressed_mb": 212.77,
+      "rows": 4887273,
+      "columns": 4,
+      "header": [
+        "entity_id",
+        "business_name",
+        "business_address",
+        "country"
+      ],
+      "likely_purpose": "Test Source 2 (Target)"
+    },
+    {
+      "file": "dataset/test/test_source3.tsv",
+      "size_uncompressed_mb": 482.56,
+      "size_compressed_mb": 208.23,
+      "rows": 5082316,
+      "columns": 4,
+      "header": [
+        "entity_id",
+        "business_name",
+        "business_address",
+        "country"
+      ],
+      "likely_purpose": "Test Source 3 (Target)"
+    }
+  ],
+  "sources": {
+    "source1": {
+      "role": "Deduplicated Reference / Query Source",
+      "id_prefix": "S1-",
+      "train_rows": 2206821,
+      "test_rows": 1732544,
+      "columns": [
+        "entity_id",
+        "business_name",
+        "business_address",
+        "country"
+      ]
+    },
+    "source2": {
+      "role": "Target Source 2 (Noisy Multi-entity Database)",
+      "id_prefix": "S2-",
+      "train_rows": 5034616,
+      "test_rows": 4887273,
+      "columns": [
+        "entity_id",
+        "business_name",
+        "business_address",
+        "country"
+      ]
+    },
+    "source3": {
+      "role": "Target Source 3 (Noisy Multi-entity Database)",
+      "id_prefix": "S3-",
+      "train_rows": 5285603,
+      "test_rows": 5082316,
+      "columns": [
+        "entity_id",
+        "business_name",
+        "business_address",
+        "country"
+      ]
+    }
+  },
+  "ground_truth": {
+    "total_s1_entities": 2206821,
+    "positive_matched_s1": 2083574,
+    "unmatched_s1_singletons": 123247,
+    "singleton_pct": 5.58,
+    "total_positive_links": 7638365,
+    "match_count_distribution": {
+      "0": 123247,
+      "1": 119157,
+      "2": 375212,
+      "3": 530841,
+      "4": 484115,
+      "5": 321957,
+      "6": 164868,
+      "7": 63968,
+      "8": 18680,
+      "9": 4205,
+      "10": 534,
+      "11": 37
+    },
+    "source_target_breakdown": {
+      "s2_links": 3693619,
+      "s3_links": 3944746,
+      "s1_matching_only_s2": 143029,
+      "s1_matching_only_s3": 164498,
+      "s1_matching_both_s2_and_s3": 1776047,
+      "s1_matching_none": 123247
+    },
+    "matched_s1_pct": 94.42,
+    "avg_matches_per_s1": 3.4613,
+    "avg_matches_per_matched_s1": 3.666,
+    "target_s2_uniqueness": {
+      "unique_s2_matched": 3693619,
+      "s2_matched_to_exactly_1_s1": 3693619,
+      "s2_matched_to_2_or_more_s1": 0,
+      "max_s1_per_s2": 1
+    },
+    "target_s3_uniqueness": {
+      "unique_s3_matched": 3944746,
+      "s3_matched_to_exactly_1_s1": 3944746,
+      "s3_matched_to_2_or_more_s1": 0,
+      "max_s1_per_s3": 1
+    }
+  },
+  "scale": {
+    "total_uncompressed_size_mb": 2403.8,
+    "total_compressed_size_mb": 1044.08,
+    "train_source1_entities": 2206821,
+    "train_source2_entities": 5034616,
+    "train_source3_entities": 5285603,
+    "test_source1_entities": 1732544,
+    "test_source2_entities": 4887273,
+    "test_source3_entities": 5082316,
+    "total_train_records": 12527040,
+    "total_test_records": 11702133,
+    "total_records_all_sources": 24229173,
+    "naive_cartesian_test_comparisons": 17272751604416,
+    "filtered_candidate_space_after_blocking": 493775040
+  },
+  "attributes": {
+    "entity_id": {
+      "type": "string / identifier",
+      "format": "Prefix (S1-, S2-, S3-) followed by integer/hash",
+      "missing_pct": 0.0,
+      "uniqueness": 100.0
+    },
+    "business_name": {
+      "type": "string / text",
+      "missing_pct": 0.0,
+      "avg_length": 24.04,
+      "has_punctuation_pct": 20.68,
+      "has_digits_pct": 1.59,
+      "legal_suffix_frequency": {
+        "inc": 10.87,
+        "llc": 16.03,
+        "ltd": 30.51,
+        "pvt_ltd": 25.11,
+        "co": 1.84,
+        "llp": 1.83,
+        "corp": 2.2,
+        "gmbh": 0.0,
+        "sa": 0.01,
+        "sas": 0.01
+      }
+    },
+    "business_address": {
+      "type": "string / text",
+      "missing_pct": 0.0,
+      "avg_length": 52.08,
+      "has_postal_code_pct": 6.74,
+      "has_landmark_pct": 4.44,
+      "has_street_type_pct": 60.63
+    },
+    "country": {
+      "type": "categorical / partition key",
+      "train_categories": {
+        "US": 7510506,
+        "India": 5016534
+      },
+      "test_categories": {
+        "US": 4480137,
+        "India": 5527551,
+        "France": 1694445
+      },
+      "missing_pct": 0.0,
+      "out_of_distribution_warning": "France appears ONLY in the test set (1.69M records, 14.48% of test data)!"
+    }
+  },
+  "matching_relationship": {
+    "mapping_type": "One-to-Many Partitioned Hierarchy (S1 -> {S2_1..S2_k, S3_1..S3_m})",
+    "singletons_pct": 5.58,
+    "target_to_s1_multiplicity": "Strictly 1: Target S2/S3 entity connects to AT MOST ONE S1 entity in ground truth",
+    "average_matches_per_matched_s1": 3.666,
+    "max_matches_per_s1": 11
+  },
+  "data_quality": {
+    "names": {
+      "train_source1": {
+        "sample_size": 100000,
+        "name_len_mean": 24.04,
+        "name_len_min": 3,
+        "name_len_max": 71,
+        "name_len_median": 24,
+        "name_has_punct_pct": 20.68,
+        "name_has_digits_pct": 1.59,
+        "legal_suffixes_pct": {
+          "inc": 10.87,
+          "llc": 16.03,
+          "ltd": 30.51,
+          "pvt_ltd": 25.11,
+          "co": 1.84,
+          "llp": 1.83,
+          "corp": 2.2,
+          "gmbh": 0.0,
+          "sa": 0.01,
+          "sas": 0.01
+        },
+        "addr_len_mean": 52.08,
+        "addr_len_median": 41,
+        "addr_has_postal_code_pct": 6.74,
+        "addr_has_landmark_pct": 4.44,
+        "addr_has_street_type_pct": 60.63
+      },
+      "train_source2": {
+        "sample_size": 100000,
+        "name_len_mean": 25.08,
+        "name_len_min": 2,
+        "name_len_max": 104,
+        "name_len_median": 25,
+        "name_has_punct_pct": 46.65,
+        "name_has_digits_pct": 5.1,
+        "legal_suffixes_pct": {
+          "inc": 8.41,
+          "corp": 4.12,
+          "ltd": 18.34,
+          "llc": 10.5,
+          "pvt_ltd": 8.12,
+          "co": 3.48,
+          "llp": 1.24,
+          "sa": 0.01,
+          "sas": 0.01,
+          "gmbh": 0.0
+        },
+        "addr_len_mean": 47.84,
+        "addr_len_median": 37,
+        "addr_has_postal_code_pct": 7.63,
+        "addr_has_landmark_pct": 3.89,
+        "addr_has_street_type_pct": 57.95
+      },
+      "train_source3": {
+        "sample_size": 100000,
+        "name_len_mean": 25.2,
+        "name_len_min": 2,
+        "name_len_max": 80,
+        "name_len_median": 25,
+        "name_has_punct_pct": 44.53,
+        "name_has_digits_pct": 5.11,
+        "legal_suffixes_pct": {
+          "ltd": 21.09,
+          "llc": 10.78,
+          "pvt_ltd": 10.1,
+          "inc": 8.25,
+          "co": 3.28,
+          "corp": 3.64,
+          "llp": 1.5,
+          "sa": 0.01,
+          "sas": 0.0
+        },
+        "addr_len_mean": 48.45,
+        "addr_len_median": 42,
+        "addr_has_postal_code_pct": 7.49,
+        "addr_has_landmark_pct": 2.85,
+        "addr_has_street_type_pct": 55.34
+      },
+      "test_source1": {
+        "sample_size": 100000,
+        "name_len_mean": 23.83,
+        "name_len_min": 3,
+        "name_len_max": 92,
+        "name_len_median": 24,
+        "name_has_punct_pct": 20.32,
+        "name_has_digits_pct": 1.19,
+        "legal_suffixes_pct": {
+          "inc": 6.86,
+          "corp": 1.71,
+          "sarl": 4.22,
+          "llp": 2.05,
+          "ltd": 35.27,
+          "pvt_ltd": 29.22,
+          "llc": 10.37,
+          "co": 1.83,
+          "sas": 3.02,
+          "sa": 0.7,
+          "gmbh": 0.0
+        },
+        "addr_len_mean": 57.1,
+        "addr_len_median": 50,
+        "addr_has_postal_code_pct": 4.37,
+        "addr_has_landmark_pct": 4.94,
+        "addr_has_street_type_pct": 58.14
+      },
+      "test_source2": {
+        "sample_size": 100000,
+        "name_len_mean": 25.68,
+        "name_len_min": 2,
+        "name_len_max": 74,
+        "name_len_median": 25,
+        "name_has_punct_pct": 46.66,
+        "name_has_digits_pct": 3.81,
+        "legal_suffixes_pct": {
+          "sarl": 2.86,
+          "ltd": 21.42,
+          "pvt_ltd": 9.71,
+          "llc": 6.53,
+          "corp": 3.39,
+          "inc": 5.38,
+          "sas": 2.02,
+          "co": 3.19,
+          "llp": 1.75,
+          "sa": 0.74,
+          "gmbh": 0.0
+        },
+        "addr_len_mean": 51.72,
+        "addr_len_median": 43,
+        "addr_has_postal_code_pct": 5.12,
+        "addr_has_landmark_pct": 4.53,
+        "addr_has_street_type_pct": 50.83
+      },
+      "test_source3": {
+        "sample_size": 100000,
+        "name_len_mean": 25.66,
+        "name_len_min": 2,
+        "name_len_max": 78,
+        "name_len_median": 25,
+        "name_has_punct_pct": 43.5,
+        "name_has_digits_pct": 4.06,
+        "legal_suffixes_pct": {
+          "co": 3.15,
+          "ltd": 24.66,
+          "pvt_ltd": 11.97,
+          "inc": 5.39,
+          "llp": 1.92,
+          "llc": 6.69,
+          "sarl": 2.87,
+          "sas": 1.93,
+          "corp": 3.21,
+          "sa": 0.71,
+          "gmbh": 0.0
+        },
+        "addr_len_mean": 50.06,
+        "addr_len_median": 44,
+        "addr_has_postal_code_pct": 5.3,
+        "addr_has_landmark_pct": 3.49,
+        "addr_has_street_type_pct": 48.17
+      }
+    },
+    "addresses": {},
+    "country_distribution": {
+      "train": {
+        "US": 7510506,
+        "India": 5016534
+      },
+      "test": {
+        "US": 4480137,
+        "France": 1694445,
+        "India": 5527551
+      }
+    },
+    "messy_name_examples": [
+      {
+        "id": "S1-309349399",
+        "name": "Callicoat & Dailey Inc",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-796227187",
+        "name": "Foot & Ankle Allied Center LLC",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-714672596",
+        "name": "Foot & Ankle Patriot Group",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-966462381",
+        "name": "Abhushan & Brothers Co",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-743171772",
+        "name": "Ear Nose & Throat Group of Oberlin",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-935703127",
+        "name": "Hartman & Hoang LLC",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-846529766",
+        "name": "Pocius, Herrera & Lima Connecticut Inc",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-761874846",
+        "name": "Murray & Cruz Inc",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-500552277",
+        "name": "U Q & Z Kimco",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-446787657",
+        "name": "Mobley, Haislip & Barr Vision Center, LLC",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-557464657",
+        "name": "Doiron & Alvarez Token LLC",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-408835967",
+        "name": "Panchavati Foods-Delhi",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-899782554",
+        "name": "U 8 Optimal Recruiting",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-615455408",
+        "name": "D & L Metro LLC",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-260530670",
+        "name": "Allen, Sherpa & Lebowitz Superior LLC",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-974991176",
+        "name": "Fresh Certified Ashford-Leesburg",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-684505968",
+        "name": "Namaskar & Co Company",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-501296085",
+        "name": "Valley & Co",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-895771779",
+        "name": "24HR Towing",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-979042353",
+        "name": "Surya & Brothers Pvt Ltd",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-654697159",
+        "name": "Sector & Co of Noida",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-580254632",
+        "name": "As & Sons Pvt Ltd",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-405795474",
+        "name": "Webster & Mullins LLC",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-326704888",
+        "name": "Ear Nose & Throat Tri-State Specialists Associates",
+        "reason": "Contains special symbols / numbers / long complex name"
+      },
+      {
+        "id": "S1-720468760",
+        "name": "B & G Exchange",
+        "reason": "Contains special symbols / numbers / long complex name"
+      }
+    ],
+    "messy_address_examples": [
+      {
+        "id": "S1-755362802",
+        "address": "797, Lake Town Block A, Kolkata, Howrah, West Bengal",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-785847572",
+        "address": "2505, Tower 1, Oakwood, Runwal Greens, Mulund Goreagon Link Road, Near Fortis Hospital, Bhandup West, Mumbai, Maharashtra",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-564729135",
+        "address": "H.No.16-11-23/37/A, 2Nd Floor, Flat No.207, Sagar Hotel Building, Opp.Rta Office, Mo, Osarambagh, Hyderabad, Telangana",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-82053739",
+        "address": "303, 3Rd Floor Sakar 5 B/H Natraj Cinema Ashram Road, Ahmedabad, Gujarat",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-221443075",
+        "address": "House No-777 Raghubir Bhawanmadan Pur Khadar Sarita Vihar, Delhi, South Delhi, Delhi",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-341506266",
+        "address": "Secunderabad, Hyderabad, Plot No.53, Flat No.402, Sr Estate-I Rainbow Colony, Ammuguda, Sainikpuri, Telangana, # 53/1",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-597762257",
+        "address": "E-7, Second Floor, New Delhi, South Delhi, Delhi",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-716574008",
+        "address": "46/1106, Dhanalakshmi Road, Near Amani Auditorium, Kannur, Kerala",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-981440385",
+        "address": "Building No. 37/4, First Floor Opp Bharata Mata College, Vazhakkala, Thrikkakara, Ernakulam, Kerala",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-791217329",
+        "address": "#17/1, Lower Ground Floor, 1St Cross, Lalbagh Road, Bangalore South, Bangalore, Karnataka",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-982210261",
+        "address": "C/O Dwarkadhis Enterprise, C.M. Palace, Ist Floor, Shop 3, Vill: Gondal(Mog), Gondal, Rajkot, Gondal, Rajkot, Gujarat",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-145829425",
+        "address": "2804, Tower A, Sarova, Samata Nagar, Kandivali East, Mumbai, Maharashtra",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-151608539",
+        "address": "House No.26-352, Kadavakollu Bhavanam, Bhuttaipeta, Near E.N.T Hospital, Machilipatanam, Krishna, Andhra Pradesh",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-855787505",
+        "address": "12, Floor 2, Plot-750, 20, Satnam Nagar, Dr G D Marg, Mumbai, Maharashtra",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-277072715",
+        "address": "D No. 20-6-3/12, Dantuluri Vari Street, Ayodyanagar, Vijayawada (Urban), Krishna, Andhra Pradesh",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-942221484",
+        "address": "Kalasandesh, Bharatkunj - 2, 19/38, Erandwana, Pune, Maharashtra",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-681392030",
+        "address": "West Bengal, Howrah, 229, Kolkata, Netaji Subhas Chandra Bose Road Vishnu Enclave, 3Rd Floor, Flat No.- 3A, Kolkata",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-666876590",
+        "address": "A-1, Malad (West), Mumbai, Maharashtra, 401, Rahul Apartment, Marve Road",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-913301865",
+        "address": "Village Kurali, Sabhapur Road Tehsil Bilaspur. Block Sadhoura, Tehsil Bilaspur, Yamuna Nagar, Haryana",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-216181354",
+        "address": "1/522A, Survey No 52, Rajput Associates, Kolkhe, Panvel, Raigarh(Mh), Maharashtra",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-454111437",
+        "address": "Flat No-702, Sapphire A, Gulmohur Tower, Chiranjeev Vihar, Sector, -6, Ghaziabad, Uttar Pradesh",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-511561869",
+        "address": "109 2 Floor 16 Cross Road, Jp Nagar Phase 4, Dollars, Bangalore South, Bangalore, Karnataka",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-888660595",
+        "address": "Zahid Manzil, Maharashtra, Mumbai, Mumbai City, Plot No.2, Shop No.7, Kkg Marg, Off Juhu Road, Opp Royal Hotel",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-684656443",
+        "address": "P. O. Ranasan, Ta. Talod, Ranasan, Sabar Kantha, Gujarat",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      },
+      {
+        "id": "S1-630223771",
+        "address": "Office 105, Flr-1, Sujata Chambers, Abhaychand Gandhi Marg, Mirchi Gully Masjid Stn Man, Dvi, Mumbai, Mumbai City, Maharashtra",
+        "country": "India",
+        "reason": "Landmark-based / multi-tier hierarchical address"
+      }
+    ],
+    "contact_info_detected": {
+      "phones_found": 1139,
+      "emails_found": 0,
+      "urls_found": 1079,
+      "sample_phones": [
+        [
+          "S1-8328737",
+          "Tlc Automotive Private Limited",
+          "Gujarat, Surat, D-303, Lake City, Karadva Mo: 7046208000, Karadva, Chorasi, Surat"
+        ],
+        [
+          "S1-288446099",
+          "Vision Projects Pvt Ltd",
+          "Bus Stand, 3527, 2040104010106, Shahpura, Betul, Madhya Pradesh"
+        ],
+        [
+          "S1-983284224",
+          "Engineering Polytechnic LLP",
+          "Aishwarya Row House, Plot No.62, Survey No. 399400401402, Row House No1, 1 No.Chemr, Y, Eklahare, Nashik, Maharashtra"
+        ],
+        [
+          "S1-113796693",
+          "Foods Robin India Private Limited",
+          "2F, Elegance Jasola District Center, Old Mathura Road, Ph. 9910259039, New Delhi, Delhi"
+        ],
+        [
+          "S1-310098237",
+          "Nandod India Limited",
+          "At Khadagda 9426120098, Village Khadagada, Nandod, Narmada, Gujarat"
+        ]
+      ],
+      "sample_emails": [],
+      "sample_urls": [
+        [
+          "S2-584977605",
+          "SHIVSHAKTI VIDYALAYA VIDYALAYA OVERSEAS CORPORATION | www.shivshakti.com",
+          "H.NO 204 C ROAD HOSHIARPUR, PUNJAB, Punjab"
+        ],
+        [
+          "S2-996245861",
+          "Shiva International-Pigraate Limited | www.shivainte.com",
+          "#476 51, AZAD SOCIETY, OPP. SACHIVALAYA, AMBAWADI, ELLIS BRIDGE, AHMEDABAD, Gujarat"
+        ],
+        [
+          "S2-251801751",
+          "WEST LTD (COURIERS) | www.westltd.com",
+          "17 BARTLETT DR, GEORGETOWN, MA"
+        ],
+        [
+          "S2-574321972",
+          "Etf Inc | www.etfinc.com",
+          "2016 MEADOW SPRINGS DR, N/A, HASSLET CITY, TX"
+        ],
+        [
+          "S2-908987230",
+          "Zabel, Romero and Porter Coastal Corp | www.zabelrom.com",
+          "747 CABIN CITY LOOP, SAINT REGIS, MT"
+        ]
+      ]
+    }
+  },
+  "blocking": {
+    "baseline_strategies": [
+      {
+        "strategy": "1. Exact Raw Name + Country",
+        "recall_pct": 10.77,
+        "true_matches_found": 11178,
+        "total_true_matches": 103809,
+        "total_candidates_generated": 15309,
+        "avg_candidates_per_s1": 0.51,
+        "p95_candidates_per_s1": 2,
+        "max_candidates_per_s1": 14,
+        "reduction_ratio_pct": 99.999799,
+        "eval_time_sec": 0.08
+      },
+      {
+        "strategy": "2. Normalized Name + Country",
+        "recall_pct": 36.83,
+        "true_matches_found": 38235,
+        "total_true_matches": 103809,
+        "total_candidates_generated": 62465,
+        "avg_candidates_per_s1": 2.08,
+        "p95_candidates_per_s1": 6,
+        "max_candidates_per_s1": 39,
+        "reduction_ratio_pct": 99.99918,
+        "eval_time_sec": 0.1
+      },
+      {
+        "strategy": "3. Prefix-3 Characters + Country",
+        "recall_pct": 79.66,
+        "true_matches_found": 82691,
+        "total_true_matches": 103809,
+        "total_candidates_generated": 9196729,
+        "avg_candidates_per_s1": 306.56,
+        "p95_candidates_per_s1": 917,
+        "max_candidates_per_s1": 2367,
+        "reduction_ratio_pct": 99.879217,
+        "eval_time_sec": 0.94
+      },
+      {
+        "strategy": "4. Prefix-4 Characters + Country",
+        "recall_pct": 78.63,
+        "true_matches_found": 81622,
+        "total_true_matches": 103809,
+        "total_candidates_generated": 5614798,
+        "avg_candidates_per_s1": 187.16,
+        "p95_candidates_per_s1": 596,
+        "max_candidates_per_s1": 2227,
+        "reduction_ratio_pct": 99.92626,
+        "eval_time_sec": 0.54
+      },
+      {
+        "strategy": "5. First Token of Name + Country",
+        "recall_pct": 74.88,
+        "true_matches_found": 77731,
+        "total_true_matches": 103809,
+        "total_candidates_generated": 4177268,
+        "avg_candidates_per_s1": 139.24,
+        "p95_candidates_per_s1": 480,
+        "max_candidates_per_s1": 2227,
+        "reduction_ratio_pct": 99.945139,
+        "eval_time_sec": 0.45
+      },
+      {
+        "strategy": "6. Postal Code / PIN + Country",
+        "recall_pct": 4.67,
+        "true_matches_found": 4844,
+        "total_true_matches": 103809,
+        "total_candidates_generated": 6943,
+        "avg_candidates_per_s1": 0.23,
+        "p95_candidates_per_s1": 2,
+        "max_candidates_per_s1": 15,
+        "reduction_ratio_pct": 99.999909,
+        "eval_time_sec": 0.04
+      },
+      {
+        "strategy": "7. Union (Prefix-3 OR First Token) + Country",
+        "recall_pct": 79.78,
+        "true_matches_found": 82823,
+        "total_true_matches": 103809,
+        "total_candidates_generated": 9277434,
+        "avg_candidates_per_s1": 309.25,
+        "p95_candidates_per_s1": 917,
+        "max_candidates_per_s1": 2367,
+        "reduction_ratio_pct": 99.878157,
+        "eval_time_sec": 1.58
+      },
+      {
+        "strategy": "8. Union (Prefix-3 OR First Token OR Postal Code) + Country",
+        "recall_pct": 80.32,
+        "true_matches_found": 83384,
+        "total_true_matches": 103809,
+        "total_candidates_generated": 9280088,
+        "avg_candidates_per_s1": 309.34,
+        "p95_candidates_per_s1": 917,
+        "max_candidates_per_s1": 2367,
+        "reduction_ratio_pct": 99.878122,
+        "eval_time_sec": 1.65
+      },
+      {
+        "strategy": "9. Precision-Optimized Union with Max Candidate Cap (Top 30)",
+        "recall_pct": 27.66,
+        "true_matches_found": 28716,
+        "total_true_matches": 103809,
+        "total_candidates_generated": 800289,
+        "avg_candidates_per_s1": 26.68,
+        "p95_candidates_per_s1": 30,
+        "max_candidates_per_s1": 30,
+        "reduction_ratio_pct": 99.98949,
+        "eval_time_sec": 1.83
+      }
+    ],
+    "advanced_strategies": [
+      {
+        "strategy": "Prefix-3 Chars",
+        "recall_pct": 80.33,
+        "true_matches_found": 55540,
+        "total_true_matches": 69144,
+        "total_candidates_generated": 4119858,
+        "avg_candidates_per_s1": 205.99,
+        "p95_candidates_per_s1": 614,
+        "max_candidates_per_s1": 1595,
+        "reduction_ratio_pct": 99.878214,
+        "eval_time_sec": 0.39
+      },
+      {
+        "strategy": "Informative Token Overlap (DF < 500)",
+        "recall_pct": 81.78,
+        "true_matches_found": 56546,
+        "total_true_matches": 69144,
+        "total_candidates_generated": 5908795,
+        "avg_candidates_per_s1": 295.44,
+        "p95_candidates_per_s1": 807,
+        "max_candidates_per_s1": 1359,
+        "reduction_ratio_pct": 99.825332,
+        "eval_time_sec": 0.73
+      },
+      {
+        "strategy": "Multi-Pass: Prefix-3 OR Informative Token (DF < 300)",
+        "recall_pct": 88.29,
+        "true_matches_found": 61050,
+        "total_true_matches": 69144,
+        "total_candidates_generated": 5697479,
+        "avg_candidates_per_s1": 284.87,
+        "p95_candidates_per_s1": 760,
+        "max_candidates_per_s1": 2031,
+        "reduction_ratio_pct": 99.831579,
+        "eval_time_sec": 0.63
+      },
+      {
+        "strategy": "High-Recall Hybrid: Prefix-3 OR Token (len>=4, DF<500)",
+        "recall_pct": 88.52,
+        "true_matches_found": 61206,
+        "total_true_matches": 69144,
+        "total_candidates_generated": 8444971,
+        "avg_candidates_per_s1": 422.25,
+        "p95_candidates_per_s1": 1032,
+        "max_candidates_per_s1": 2093,
+        "reduction_ratio_pct": 99.750361,
+        "eval_time_sec": 0.93
+      },
+      {
+        "strategy": "High-Recall Hybrid with Max 50 Capped Candidates",
+        "recall_pct": 27.54,
+        "true_matches_found": 19039,
+        "total_true_matches": 69144,
+        "total_candidates_generated": 924601,
+        "avg_candidates_per_s1": 46.23,
+        "p95_candidates_per_s1": 50,
+        "max_candidates_per_s1": 50,
+        "reduction_ratio_pct": 99.972668,
+        "eval_time_sec": 1.1
+      }
+    ],
+    "recommended_blocking_pipeline": "Multi-Pass Union: [Pass 1: Country + Prefix-3 chars of name] | [Pass 2: Country + Informative Token (len>=4, DF<300)] | [Pass 3: Country + Exact PIN/ZIP] -> Yields 88.3% recall at 99.83% candidate reduction (~285 cands/query)"
+  },
+  "metric": {
+    "name": "Macro-averaged F_0.5 Score",
+    "formula": "F_0.5 = (1.25 * Precision * Recall) / (0.25 * Precision + Recall)",
+    "scope": "Macro-averaged across all Source 1 entities in test set",
+    "precision_weight": "Precision is weighted 2x over recall (beta=0.5)",
+    "singleton_handling": "Correct empty prediction yields 1.0; Any false match on singleton yields 0.0"
+  },
+  "submission": {
+    "file1": "output/matching_results.tsv (columns: source1_entity_id, matched_entity_ids)",
+    "file2": "output/candidate_pairs.tsv (columns: source1_entity_id, candidate_entity_ids)",
+    "format": "Tab-separated (.tsv), UTF-8, no quoting, commas separating IDs within list",
+    "row_count": 1732544,
+    "must_include_all_s1": true
+  },
+  "leakage": {
+    "train_test_id_overlap": {
+      "s1_overlap": 0,
+      "s2_overlap": 0,
+      "s3_overlap": 0
+    },
+    "exact_duplicate_leakage": "Zero ID overlap. Clean disjoint split.",
+    "country_distribution_shift": "France present in test set only (zero training labels for France)"
+  },
+  "recommended_features": [
+    {
+      "feature": "addr_overlap",
+      "info_gain": 0.8117,
+      "best_split_threshold": 0.25,
+      "pearson_correlation": 0.9057,
+      "precision_when_active": 0.9994
+    },
+    {
+      "feature": "addr_ngram",
+      "info_gain": 0.7829,
+      "best_split_threshold": 0.1,
+      "pearson_correlation": 0.8686,
+      "precision_when_active": 1.0
+    },
+    {
+      "feature": "addr_jaccard",
+      "info_gain": 0.7786,
+      "best_split_threshold": 0.25,
+      "pearson_correlation": 0.8445,
+      "precision_when_active": 1.0
+    },
+    {
+      "feature": "name_ngram",
+      "info_gain": 0.7229,
+      "best_split_threshold": 0.1,
+      "pearson_correlation": 0.8223,
+      "precision_when_active": 0.9999
+    },
+    {
+      "feature": "name_overlap",
+      "info_gain": 0.661,
+      "best_split_threshold": 0.5,
+      "pearson_correlation": 0.8283,
+      "precision_when_active": 0.996
+    },
+    {
+      "feature": "name_jaccard",
+      "info_gain": 0.6579,
+      "best_split_threshold": 0.25,
+      "pearson_correlation": 0.7769,
+      "precision_when_active": 0.9998
+    },
+    {
+      "feature": "addr_num_match",
+      "info_gain": 0.5269,
+      "best_split_threshold": 0.1,
+      "pearson_correlation": 0.7718,
+      "precision_when_active": 0.9887
+    },
+    {
+      "feature": "country_match",
+      "info_gain": 0.2964,
+      "best_split_threshold": 0.1,
+      "pearson_correlation": 0.5627,
+      "precision_when_active": 0.6583
+    },
+    {
+      "feature": "name_norm_exact",
+      "info_gain": 0.2167,
+      "best_split_threshold": 0.1,
+      "pearson_correlation": 0.4777,
+      "precision_when_active": 1.0
+    },
+    {
+      "feature": "name_exact",
+      "info_gain": 0.055,
+      "best_split_threshold": 0.1,
+      "pearson_correlation": 0.2364,
+      "precision_when_active": 1.0
+    },
+    {
+      "feature": "addr_norm_exact",
+      "info_gain": 0.0434,
+      "best_split_threshold": 0.1,
+      "pearson_correlation": 0.2097,
+      "precision_when_active": 1.0
+    },
+    {
+      "feature": "addr_exact",
+      "info_gain": 0.0382,
+      "best_split_threshold": 0.1,
+      "pearson_correlation": 0.1964,
+      "precision_when_active": 1.0
+    }
+  ],
+  "recommended_models": [
+    {
+      "rank": 1,
+      "approach": "Rule-Based + Multi-Pass Blocking Baseline",
+      "cost": "Low (minutes)",
+      "advantages": "Deterministic, zero memory overhead, fast iteration"
+    },
+    {
+      "rank": 2,
+      "approach": "LightGBM / XGBoost Pairwise Matcher on String & Token Features",
+      "cost": "Medium (~1-2 hours for full dataset)",
+      "advantages": "Top tabular performance, highly calibrated probabilities for F0.5 optimization"
+    },
+    {
+      "rank": 3,
+      "approach": "Pretrained Cross-Encoder / Bi-Encoder Embeddings (DeBERTa-v3 / MiniLM / BAAI)",
+      "cost": "High (requires GPU for 1.7M queries)",
+      "advantages": "Captures semantic nuances and zero-shot French entity matching without training labels"
+    },
+    {
+      "rank": 4,
+      "approach": "Ensemble / Score Fusion + Entity Disjoint Assignment (Hungarian / Greedy 1-to-N)",
+      "cost": "Low post-processing overhead",
+      "advantages": "Enforces global 1-to-N target uniqueness constraint discovered in ground truth audit"
+    }
+  ],
+  "recommended_architecture": [
+    "1. Ingestion & Country Partitioning (US, India, France)",
+    "2. Multi-Pass High-Recall Blocking (Prefix-3 + Informative Token + Postal PIN)",
+    "3. Feature Extraction (Address Token Overlap, 3-Gram Jaccard, Name Overlap/Levenshtein, Number Agreement)",
+    "4. LightGBM / CatBoost Matcher + Multilingual Transformer (for France OOD)",
+    "5. Precision-Biased Threshold Optimization (Optimal threshold T=0.20-0.30 on calibrated prob / composite score)",
+    "6. Target Uniqueness Enforcement (Each S2/S3 entity assigned to at most one highest-scoring S1)",
+    "7. Submission Generator & Self-Validator (output/matching_results.tsv & output/candidate_pairs.tsv)"
+  ]
+}
